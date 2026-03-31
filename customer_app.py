@@ -178,15 +178,16 @@ class CustomerSystem:
                                  show='headings', style="Custom.Treeview")
 
         col_widths = {
-            "日期": 90, "訂購人": 70, "電話": 100, "地址": 180,
-            "贈品": 60, "品項": 70, "備註": 80, "尺寸": 55,
-            "數量": 50, "單價": 70, "總價": 70, "折扣": 50,
-            "特殊折扣": 65, "實拿": 70, "成本(品項+贈品)": 110,
-            "利潤": 65, "付款方式": 70, "是否已付": 65,
+            "日期": 100, "訂購人": 80, "電話": 110, "地址": 200,
+            "贈品": 80, "品項": 100, "備註": 120, "尺寸": 70,
+            "數量": 55, "單價": 80, "總價": 80, "折扣": 60,
+            "特殊折扣": 75, "實拿": 80, "成本(品項+贈品)": 120,
+            "利潤": 75, "付款方式": 80, "是否已付": 75,
         }
         for col in self.cols:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=col_widths.get(col, 65), anchor="center")
+            w = col_widths.get(col, 75)
+            self.tree.column(col, width=w, minwidth=w, stretch=False, anchor="center")
 
         scrollbar_y = ttk.Scrollbar(table_frame, orient="vertical",
                                     command=self.tree.yview, style="Custom.Vertical.TScrollbar")
