@@ -86,6 +86,7 @@ class TablePanel:
         self.tree.pack(side="left", fill="both", expand=True)
 
         self.tree.tag_configure('odd', background=COLORS["table_row_alt"])
+        self.tree.tag_configure('summary', background="#e3f0fa", font=("Arial", 11, "bold"))
 
     def _build_status_bar(self):
         self.status_var = tk.StringVar(value="就緒")
@@ -107,7 +108,7 @@ class TablePanel:
 
     def _show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
-        if not item:
+        if not item or item == '_summary':
             return
         self.tree.selection_set(item)
         self.ctx_menu.tk_popup(event.x_root, event.y_root)
@@ -149,6 +150,8 @@ class TablePanel:
     # ─── 公開方法 ───
 
     def display(self, target_df):
+        import pandas as pd
+
         for r in self.tree.get_children():
             self.tree.delete(r)
 
@@ -161,11 +164,40 @@ class TablePanel:
         else:
             sorted_df = target_df
 
+        int_cols = {"數量", "單價", "總價", "實拿", "成本(品項+贈品)", "利潤"}
         for idx, (df_idx, row) in enumerate(sorted_df.fillna("").iterrows()):
-            values = [row.get(c, "") for c in COLS]
+            values = []
+            for c in COLS:
+                v = row.get(c, "")
+                if c in int_cols and v != "":
+                    try:
+                        v = int(float(v))
+                    except (ValueError, TypeError):
+                        pass
+                values.append(v)
             tag = ('odd',) if idx % 2 == 1 else ()
             self.tree.insert('', 'end', values=values, tags=tag)
             self._display_indices.append(df_idx)
+
+        # 加總行
+        if not sorted_df.empty:
+            sum_cols = {"總價", "實拿", "成本(品項+贈品)", "利潤"}
+            summary = []
+            for c in COLS:
+                if c in sum_cols:
+                    val = pd.to_numeric(sorted_df[c], errors='coerce').sum()
+                    summary.append(f"{val:,.0f}" if val else "")
+                elif c == "日期":
+                    summary.append("【合計】")
+                elif c == "付款方式":
+                    # 利潤率
+                    total_rev = pd.to_numeric(sorted_df["總價"], errors='coerce').sum()
+                    total_profit = pd.to_numeric(sorted_df["利潤"], errors='coerce').sum()
+                    rate = (total_profit / total_rev * 100) if total_rev > 0 else 0
+                    summary.append(f"利潤率 {rate:.1f}%")
+                else:
+                    summary.append("")
+            self.tree.insert('', 'end', iid='_summary', values=summary, tags=('summary',))
 
         self.status_var.set(f"共 {len(sorted_df)} 筆紀錄")
 

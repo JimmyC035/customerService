@@ -112,6 +112,8 @@ class CustomerSystem:
             try:
                 self.df = pd.read_excel(MASTER_FILE).fillna("")
                 self.df["日期"] = self.df["日期"].astype(str).str.split(" ").str[0]
+                # 過濾掉合計行等非資料行
+                self.df = self.df[self.df["日期"].str.match(r'^\d{4}-', na=False)].reset_index(drop=True)
             except Exception:
                 self.df = pd.DataFrame(columns=COLS)
         else:
