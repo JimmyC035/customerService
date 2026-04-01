@@ -24,7 +24,7 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name "客戶帳務管理系統" customer_app.py
+          pyinstaller --onefile --windowed --name "客戶帳務管理系統" --add-data "product_db.xlsx;." --hidden-import matplotlib --hidden-import matplotlib.backends.backend_tkagg customer_app.py
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
