@@ -30,23 +30,29 @@ class ProductDatabase:
         return sorted(self.df["品項"].astype(str).unique().tolist())
 
     def get_sizes(self, product):
-        sizes = self.df[self.df["品項"] == product]["尺寸"].tolist()
+        sizes = self.df[self.df["品項"].astype(str) == str(product)]["尺寸"].tolist()
         return [str(s) for s in sizes if s != ""]
 
     def get_price(self, product, size):
-        row = self.df[(self.df["品項"] == product) & (self.df["尺寸"] == size)]
+        df = self.df.copy()
+        df["品項"] = df["品項"].astype(str)
+        df["尺寸"] = df["尺寸"].astype(str)
+        row = df[(df["品項"] == str(product)) & (df["尺寸"] == str(size))]
         if not row.empty:
             return row.iloc[0]["單價"]
-        row = self.df[(self.df["品項"] == product) & (self.df["尺寸"] == "")]
+        row = df[(df["品項"] == str(product)) & (df["尺寸"] == "")]
         if not row.empty:
             return row.iloc[0]["單價"]
         return 0
 
     def get_cost(self, product, size):
-        row = self.df[(self.df["品項"] == product) & (self.df["尺寸"] == size)]
+        df = self.df.copy()
+        df["品項"] = df["品項"].astype(str)
+        df["尺寸"] = df["尺寸"].astype(str)
+        row = df[(df["品項"] == str(product)) & (df["尺寸"] == str(size))]
         if not row.empty:
             return row.iloc[0]["成本"]
-        row = self.df[(self.df["品項"] == product) & (self.df["尺寸"] == "")]
+        row = df[(df["品項"] == str(product)) & (df["尺寸"] == "")]
         if not row.empty:
             return row.iloc[0]["成本"]
         return 0
@@ -115,6 +121,28 @@ class ProductManagerUI:
                   font=("Arial", 11, "bold"), relief="flat",
                   padx=16, pady=6, cursor="hand2").pack(side="left", padx=4, pady=(18, 0))
 
+        # 搜尋列
+        search_frame = tk.Frame(self.parent, bg=COLORS["card"],
+                                highlightbackground=COLORS["border"], highlightthickness=1)
+        search_frame.pack(fill="x", padx=24, pady=(0, 8))
+
+        search_inner = tk.Frame(search_frame, bg=COLORS["card"])
+        search_inner.pack(fill="x", padx=20, pady=8)
+
+        tk.Label(search_inner, text=" 🔍", bg=COLORS["card"],
+                 fg=COLORS["text_light"],
+                 font=("Arial", 13)).pack(side="left", padx=(0, 4))
+        self.search_ent = tk.Entry(search_inner, width=30,
+                                    bg=COLORS["card"], fg=COLORS["text_light"],
+                                    insertbackground=COLORS["text"],
+                                    font=("Arial", 12), relief="flat",
+                                    highlightthickness=0)
+        self.search_ent.pack(side="left", fill="x", expand=True, padx=4)
+        self.search_ent.insert(0, "搜尋品項...")
+        self.search_ent.bind("<FocusIn>", self._search_focus_in)
+        self.search_ent.bind("<FocusOut>", self._search_focus_out)
+        self.search_ent.bind("<KeyRelease>", lambda e: self._search())
+
         # 下方樹狀表格
         table_outer = tk.Frame(self.parent, bg=COLORS["card"],
                                highlightbackground=COLORS["border"], highlightthickness=1)
@@ -161,7 +189,24 @@ class ProductManagerUI:
         self.tree.selection_set(item)
         self.ctx_menu.tk_popup(event.x_root, event.y_root)
 
-    def refresh_table(self):
+    def _search_focus_in(self, event):
+        if self.search_ent.get() == "搜尋品項...":
+            self.search_ent.delete(0, tk.END)
+            self.search_ent.config(fg=COLORS["text"])
+
+    def _search_focus_out(self, event):
+        if not self.search_ent.get():
+            self.search_ent.insert(0, "搜尋品項...")
+            self.search_ent.config(fg=COLORS["text_light"])
+
+    def _search(self):
+        q = self.search_ent.get().strip().lower()
+        if not q or q == "搜尋品項...":
+            self.refresh_table()
+        else:
+            self.refresh_table(filter_text=q)
+
+    def refresh_table(self, filter_text=None):
         self.db.reload()
         for r in self.tree.get_children():
             self.tree.delete(r)
@@ -170,6 +215,9 @@ class ProductManagerUI:
         df = self.db.df.copy()
         df["品項"] = df["品項"].astype(str)
         df["_orig_idx"] = df.index
+
+        if filter_text:
+            df = df[df["品項"].str.lower().str.contains(filter_text, na=False)]
 
         products = df.groupby("品項", sort=True)
         row_count = 0

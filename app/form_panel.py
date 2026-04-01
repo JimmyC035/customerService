@@ -4,15 +4,15 @@ from datetime import datetime
 
 from app.constants import COLORS, PAYMENT_METHODS, PAYMENT_STATUS
 
+# 費率
+SHIPPING_RATE = 0.04
+CARD_INVOICE_RATE = 0.11
 
-# Combobox 欄位
-COMBOBOX_FIELDS = {"品項", "尺寸", "付款方式", "是否已付"}
-# 自動計算的 readonly 欄位
-READONLY_FIELDS = {"單價", "總價", "實拿", "成本(品項+贈品)", "利潤"}
+MAX_PRODUCT_ROWS = 20
 
 
 class FormPanel:
-    """快速新增紀錄的表單面板"""
+    """快速新增紀錄的表單面板（支援多品項）"""
 
     def __init__(self, parent, on_save, product_db=None):
         self.parent = parent
@@ -38,247 +38,480 @@ class FormPanel:
                                  highlightbackground=COLORS["border"], highlightthickness=1)
         self.add_card.pack(fill="x", padx=24, pady=(4, 8))
 
-        self.inputs = {}
-        input_rows = [
-            ["日期", "訂購人", "電話", "地址", "贈品", "品項"],
-            ["備註", "尺寸", "數量", "單價", "總價", "折扣"],
-            ["特殊折扣", "實拿", "成本(品項+贈品)", "利潤", "付款方式", "是否已付"],
+        main_form = tk.Frame(self.add_card, bg=COLORS["card"])
+        main_form.pack(fill="x", padx=20, pady=(16, 0))
+
+        # ── Row 1: 客戶資訊 ──
+        self.shared_inputs = {}
+        row1_fields = ["日期", "訂購人", "電話", "地址", "贈品"]
+        for i, field in enumerate(row1_fields):
+            cell = tk.Frame(main_form, bg=COLORS["card"])
+            cell.grid(row=0, column=i, padx=6, pady=6, sticky="ew")
+            tk.Label(cell, text=field, bg=COLORS["card"], fg=COLORS["text_light"],
+                     font=("Arial", 10)).pack(anchor="w")
+            ent = tk.Entry(cell, width=14,
+                           bg=COLORS["input_bg"], fg=COLORS["text"],
+                           insertbackground=COLORS["text"],
+                           font=("Arial", 11), relief="solid",
+                           highlightthickness=0, bd=1)
+            ent.pack(fill="x", ipady=4)
+            if field == "日期":
+                ent.insert(0, datetime.now().strftime("%Y-%m-%d"))
+            self.shared_inputs[field] = ent
+            main_form.columnconfigure(i, weight=1)
+
+        # ── Row 2+: 多品項區域 ──
+        product_section = tk.Frame(self.add_card, bg=COLORS["card"])
+        product_section.pack(fill="x", padx=20, pady=(8, 8))
+
+        label_row = tk.Frame(product_section, bg=COLORS["card"])
+        label_row.pack(fill="x", pady=(0, 4))
+
+        tk.Label(label_row, text="品項明細", bg=COLORS["card"],
+                 fg=COLORS["primary"], font=("Arial", 11, "bold")).pack(side="left")
+        tk.Button(label_row, text="＋ 新增品項", command=self._add_product_row,
+                  bg="#e3f2fd", fg=COLORS["primary"],
+                  font=("Arial", 10), relief="flat", padx=10, cursor="hand2"
+                  ).pack(side="right")
+
+        # 品項表格（表頭 + 品項行在同一個 grid 框架中，確保對齊）
+        self.product_grid = tk.Frame(product_section, bg=COLORS["card"])
+        self.product_grid.pack(fill="x")
+
+        headers = ["品項", "尺寸", "數量", "單價", "折扣", "總價", ""]
+        col_weights = [3, 2, 1, 2, 1, 2, 0]
+        for i, (h, w) in enumerate(zip(headers, col_weights)):
+            tk.Label(self.product_grid, text=h, bg=COLORS["card"],
+                     fg=COLORS["text_light"],
+                     font=("Arial", 10)).grid(row=0, column=i, padx=6, sticky="w")
+            self.product_grid.columnconfigure(i, weight=w)
+
+        self.product_rows = []
+        self._product_grid_row = 1
+        self._add_product_row()  # 預設一行
+
+        # ── Row 3: 財務 ──
+        fin_form = tk.Frame(self.add_card, bg=COLORS["card"])
+        fin_form.pack(fill="x", padx=20, pady=(4, 0))
+
+        self.fin_inputs = {}
+        fin_fields = [
+            ("特殊折扣", False),
+            ("實拿", True), ("成本(品項+贈品)", True), ("利潤", True),
         ]
+        for i, (field, readonly) in enumerate(fin_fields):
+            cell = tk.Frame(fin_form, bg=COLORS["card"])
+            cell.grid(row=0, column=i, padx=6, pady=6, sticky="ew")
+            tk.Label(cell, text=field, bg=COLORS["card"], fg=COLORS["text_light"],
+                     font=("Arial", 10)).pack(anchor="w")
+            if readonly:
+                ent = tk.Entry(cell, width=14,
+                               bg="#e8edf2", fg=COLORS["text"],
+                               insertbackground=COLORS["text"],
+                               font=("Arial", 11), relief="solid",
+                               highlightthickness=0, bd=1,
+                               state="readonly", readonlybackground="#e8edf2")
+            else:
+                ent = tk.Entry(cell, width=14,
+                               bg=COLORS["input_bg"], fg=COLORS["text"],
+                               insertbackground=COLORS["text"],
+                               font=("Arial", 11), relief="solid",
+                               highlightthickness=0, bd=1)
+                ent.bind("<KeyRelease>", lambda e: self._recalculate())
+            ent.pack(fill="x", ipady=4)
+            self.fin_inputs[field] = ent
+            fin_form.columnconfigure(i, weight=1)
 
-        form = tk.Frame(self.add_card, bg=COLORS["card"])
-        form.pack(fill="x", padx=20, pady=16)
+        # ── Row 4: 付款 / 附加費用 ──
+        pay_form = tk.Frame(self.add_card, bg=COLORS["card"])
+        pay_form.pack(fill="x", padx=20, pady=(4, 0))
 
-        for row_idx, row_cols in enumerate(input_rows):
-            for col_idx, field in enumerate(row_cols):
-                cell = tk.Frame(form, bg=COLORS["card"])
-                cell.grid(row=row_idx, column=col_idx, padx=6, pady=6, sticky="ew")
+        # 付款方式
+        cell = tk.Frame(pay_form, bg=COLORS["card"])
+        cell.grid(row=0, column=0, padx=6, pady=6, sticky="ew")
+        tk.Label(cell, text="付款方式", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        self.payment_cb = ttk.Combobox(cell, width=12, font=("Arial", 11),
+                                        values=PAYMENT_METHODS)
+        self.payment_cb.pack(fill="x", ipady=4)
 
-                tk.Label(cell, text=field, bg=COLORS["card"], fg=COLORS["text_light"],
-                         font=("Arial", 10)).pack(anchor="w")
+        # 是否已付
+        cell2 = tk.Frame(pay_form, bg=COLORS["card"])
+        cell2.grid(row=0, column=1, padx=6, pady=6, sticky="ew")
+        tk.Label(cell2, text="是否已付", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        self.paid_cb = ttk.Combobox(cell2, width=12, font=("Arial", 11),
+                                     values=PAYMENT_STATUS)
+        self.paid_cb.pack(fill="x", ipady=4)
 
-                if field in COMBOBOX_FIELDS:
-                    widget = ttk.Combobox(cell, width=12, font=("Arial", 11))
-                    widget.pack(fill="x", ipady=4)
-                    self._setup_combobox(field, widget)
-                elif field in READONLY_FIELDS:
-                    widget = tk.Entry(cell, width=14,
-                                      bg="#e8edf2", fg=COLORS["text"],
-                                      insertbackground=COLORS["text"],
-                                      font=("Arial", 11), relief="solid",
-                                      highlightthickness=0, bd=1,
-                                      state="readonly",
-                                      readonlybackground="#e8edf2")
-                    widget.pack(fill="x", ipady=4)
-                else:
-                    widget = tk.Entry(cell, width=14,
-                                      bg=COLORS["input_bg"], fg=COLORS["text"],
-                                      insertbackground=COLORS["text"],
-                                      font=("Arial", 11), relief="solid",
-                                      highlightthickness=0, bd=1)
-                    widget.pack(fill="x", ipady=4)
+        # 其他成本
+        cell3 = tk.Frame(pay_form, bg=COLORS["card"])
+        cell3.grid(row=0, column=2, padx=6, pady=6, sticky="ew")
+        tk.Label(cell3, text="其他成本", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        self.other_cost_ent = tk.Entry(cell3, width=14,
+                                        bg=COLORS["input_bg"], fg=COLORS["text"],
+                                        insertbackground=COLORS["text"],
+                                        font=("Arial", 11), relief="solid",
+                                        highlightthickness=0, bd=1)
+        self.other_cost_ent.pack(fill="x", ipady=4)
+        self.other_cost_ent.bind("<KeyRelease>", lambda e: self._recalculate())
 
-                if field == "日期":
-                    widget.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        # 勾選框
+        cb_frame = tk.Frame(pay_form, bg=COLORS["card"])
+        cb_frame.grid(row=0, column=3, padx=6, pady=6, sticky="sw")
 
-                # 綁定自動計算事件
-                if field == "數量":
-                    widget.bind("<KeyRelease>", lambda e: self._recalculate())
-                elif field == "折扣":
-                    widget.bind("<KeyRelease>", lambda e: self._recalculate())
-                elif field == "特殊折扣":
-                    widget.bind("<KeyRelease>", lambda e: self._recalculate())
+        self.shipping_var = tk.BooleanVar(value=False)
+        self.card_invoice_var = tk.BooleanVar(value=False)
 
-                self.inputs[field] = widget
+        for text, var in [("運費 (4%)", self.shipping_var),
+                          ("刷卡開發票 (11%)", self.card_invoice_var)]:
+            tk.Checkbutton(cb_frame, text=text, variable=var,
+                           bg=COLORS["card"], fg=COLORS["text"],
+                           activebackground=COLORS["card"],
+                           font=("Arial", 10), command=self._recalculate
+                           ).pack(side="left", padx=(0, 12))
 
-            form.columnconfigure(col_idx, weight=1)
+        for i in range(4):
+            pay_form.columnconfigure(i, weight=1)
 
-        # ── Row 4：附加費用 ──
-        extra_row = tk.Frame(self.add_card, bg=COLORS["card"])
-        extra_row.pack(fill="x", padx=20, pady=(0, 8))
+        # ── 備註 + 儲存 ──
+        bottom = tk.Frame(self.add_card, bg=COLORS["card"])
+        bottom.pack(fill="x", padx=20, pady=(4, 16))
 
-        self.card_fee_var = tk.BooleanVar(value=False)
-        self.invoice_fee_var = tk.BooleanVar(value=False)
+        remark_cell = tk.Frame(bottom, bg=COLORS["card"])
+        remark_cell.pack(side="left", fill="x", expand=True)
+        tk.Label(remark_cell, text="備註", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        self.remark_ent = tk.Entry(remark_cell, width=30,
+                                    bg=COLORS["input_bg"], fg=COLORS["text"],
+                                    insertbackground=COLORS["text"],
+                                    font=("Arial", 11), relief="solid",
+                                    highlightthickness=0, bd=1)
+        self.remark_ent.pack(fill="x", ipady=4)
 
-        cb_card = tk.Checkbutton(extra_row, text="刷卡手續費 (4%)",
-                                 variable=self.card_fee_var,
-                                 bg=COLORS["card"], fg=COLORS["text"],
-                                 activebackground=COLORS["card"],
-                                 font=("Arial", 11),
-                                 command=self._recalculate)
-        cb_card.pack(side="left", padx=(0, 16))
+        tk.Button(bottom, text="💾  儲存紀錄", command=self._save,
+                  bg=COLORS["success"], fg="white",
+                  activebackground="#256d29", activeforeground="white",
+                  font=("Arial", 12, "bold"),
+                  relief="flat", padx=24, pady=8, cursor="hand2"
+                  ).pack(side="right", padx=(16, 0))
 
-        cb_invoice = tk.Checkbutton(extra_row, text="開發票 (11%)",
-                                    variable=self.invoice_fee_var,
-                                    bg=COLORS["card"], fg=COLORS["text"],
-                                    activebackground=COLORS["card"],
-                                    font=("Arial", 11),
-                                    command=self._recalculate)
-        cb_invoice.pack(side="left", padx=(0, 16))
+    # ─── 多品項行管理 ───
 
-        tk.Label(extra_row, text="運費:", bg=COLORS["card"], fg=COLORS["text"],
-                 font=("Arial", 11)).pack(side="left", padx=(0, 4))
-        self.shipping_ent = tk.Entry(extra_row, width=10,
-                                     bg=COLORS["input_bg"], fg=COLORS["text"],
-                                     insertbackground=COLORS["text"],
-                                     font=("Arial", 11), relief="solid",
-                                     highlightthickness=0, bd=1)
-        self.shipping_ent.pack(side="left", ipady=4)
-        self.shipping_ent.bind("<KeyRelease>", lambda e: self._recalculate())
+    def _add_product_row(self):
+        if len(self.product_rows) >= MAX_PRODUCT_ROWS:
+            return
 
-        # 儲存按鈕
-        btn_row = tk.Frame(self.add_card, bg=COLORS["card"])
-        btn_row.pack(fill="x", padx=20, pady=(0, 16))
-        save_btn = tk.Button(btn_row, text="💾  儲存紀錄",
-                             command=self._save,
-                             bg=COLORS["success"], fg="white",
-                             activebackground="#256d29", activeforeground="white",
-                             font=("Arial", 12, "bold"),
-                             relief="flat", padx=24, pady=8, cursor="hand2")
-        save_btn.pack(side="right")
+        r = self._product_grid_row
+        row_data = {}
+        widgets = []
 
-    # ─── Combobox 設定 ───
+        # 品項 Combobox
+        cb_product = ttk.Combobox(self.product_grid, width=12, font=("Arial", 11))
+        if self.product_db:
+            cb_product['values'] = self.product_db.get_products()
+        cb_product.grid(row=r, column=0, padx=6, pady=2, sticky="ew")
+        cb_product.bind("<<ComboboxSelected>>",
+                        lambda e, rd=row_data: self._on_product_selected(rd))
+        row_data["品項"] = cb_product
+        widgets.append(cb_product)
 
-    def _setup_combobox(self, field, widget):
-        if field == "品項":
-            if self.product_db:
-                widget['values'] = self.product_db.get_products()
-            widget.bind("<<ComboboxSelected>>", self._on_product_selected)
-        elif field == "尺寸":
-            widget.bind("<<ComboboxSelected>>", self._on_size_selected)
-        elif field == "付款方式":
-            widget['values'] = PAYMENT_METHODS
-            widget.bind("<<ComboboxSelected>>", self._on_payment_changed)
-        elif field == "是否已付":
-            widget['values'] = PAYMENT_STATUS
+        # 尺寸 Combobox
+        cb_size = ttk.Combobox(self.product_grid, width=10, font=("Arial", 11))
+        cb_size.grid(row=r, column=1, padx=6, pady=2, sticky="ew")
+        cb_size.bind("<<ComboboxSelected>>",
+                     lambda e, rd=row_data: self._on_size_selected(rd))
+        row_data["尺寸"] = cb_size
+        widgets.append(cb_size)
 
-    def _on_product_selected(self, event=None):
-        product = self.inputs["品項"].get()
+        # 數量
+        ent_qty = tk.Entry(self.product_grid, width=8,
+                           bg=COLORS["input_bg"], fg=COLORS["text"],
+                           insertbackground=COLORS["text"],
+                           font=("Arial", 11), relief="solid",
+                           highlightthickness=0, bd=1)
+        ent_qty.grid(row=r, column=2, padx=6, pady=2, sticky="ew")
+        ent_qty.bind("<KeyRelease>",
+                     lambda e, rd=row_data: self._on_qty_changed(rd))
+        row_data["數量"] = ent_qty
+        widgets.append(ent_qty)
+
+        # 單價 (readonly)
+        ent_price = tk.Entry(self.product_grid, width=10,
+                             bg="#e8edf2", fg=COLORS["text"],
+                             font=("Arial", 11), relief="solid",
+                             highlightthickness=0, bd=1,
+                             state="readonly", readonlybackground="#e8edf2")
+        ent_price.grid(row=r, column=3, padx=6, pady=2, sticky="ew")
+        row_data["單價"] = ent_price
+        widgets.append(ent_price)
+
+        # 折扣
+        ent_discount = tk.Entry(self.product_grid, width=6,
+                                bg=COLORS["input_bg"], fg=COLORS["text"],
+                                insertbackground=COLORS["text"],
+                                font=("Arial", 11), relief="solid",
+                                highlightthickness=0, bd=1)
+        ent_discount.grid(row=r, column=4, padx=6, pady=2, sticky="ew")
+        ent_discount.bind("<KeyRelease>",
+                          lambda e, rd=row_data: self._on_qty_changed(rd))
+        row_data["折扣"] = ent_discount
+        widgets.append(ent_discount)
+
+        # 總價 (readonly)
+        ent_total = tk.Entry(self.product_grid, width=10,
+                             bg="#e8edf2", fg=COLORS["text"],
+                             font=("Arial", 11), relief="solid",
+                             highlightthickness=0, bd=1,
+                             state="readonly", readonlybackground="#e8edf2")
+        ent_total.grid(row=r, column=5, padx=6, pady=2, sticky="ew")
+        row_data["總價"] = ent_total
+        widgets.append(ent_total)
+
+        # 隱藏的基礎成本
+        row_data["_base_cost"] = 0
+
+        # 刪除按鈕（第一行不顯示）
+        if len(self.product_rows) > 0:
+            btn_del = tk.Button(self.product_grid, text="✕",
+                                command=lambda rd=row_data: self._remove_product_row(rd),
+                                bg=COLORS["card"], fg="#c62828",
+                                font=("Arial", 10), relief="flat", cursor="hand2")
+            btn_del.grid(row=r, column=6, padx=2, pady=2)
+            widgets.append(btn_del)
+
+        row_data["_widgets"] = widgets
+        self.product_rows.append(row_data)
+        self._product_grid_row += 1
+
+    def _remove_product_row(self, row_data):
+        for w in row_data["_widgets"]:
+            w.destroy()
+        self.product_rows.remove(row_data)
+        self._recalculate()
+
+    # ─── 品項連動 ───
+
+    def _on_product_selected(self, row_data):
+        product = row_data["品項"].get()
         if not self.product_db:
             return
         sizes = self.product_db.get_sizes(product)
-        size_widget = self.inputs["尺寸"]
-        size_widget['values'] = sizes
-        size_widget.set('')
+        row_data["尺寸"]['values'] = sizes
+        row_data["尺寸"].set('')
         if sizes and len(sizes) == 1:
-            size_widget.set(sizes[0])
-            self._on_size_selected()
-        else:
-            # 無尺寸的品項也帶入單價和成本
-            self._on_size_selected()
+            row_data["尺寸"].set(sizes[0])
+        self._on_size_selected(row_data)
 
-    def _on_size_selected(self, event=None):
+    def _on_size_selected(self, row_data):
         if not self.product_db:
             return
-        product = self.inputs["品項"].get()
-        size = self.inputs["尺寸"].get()
+        product = row_data["品項"].get()
+        size = row_data["尺寸"].get()
         price = self.product_db.get_price(product, size)
         cost = self.product_db.get_cost(product, size)
 
-        self._set_readonly("單價", price)
-        self._base_cost = float(cost) if cost else 0
-        self._recalculate()
+        self._set_readonly(row_data["單價"], price)
+        row_data["_base_cost"] = float(cost) if cost else 0
+        self._on_qty_changed(row_data)
 
-    def _on_payment_changed(self, event=None):
-        method = self.inputs["付款方式"].get()
-        if method == "刷卡":
-            self.card_fee_var.set(True)
-        else:
-            self.card_fee_var.set(False)
+    def _on_qty_changed(self, row_data):
+        price = self._get_num_widget(row_data["單價"])
+        qty = self._get_num_widget(row_data["數量"])
+        discount = self._get_num_widget(row_data["折扣"])
+        total = price * qty
+        if discount > 0:
+            total = total * discount
+        self._set_readonly(row_data["總價"], total)
         self._recalculate()
 
     # ─── 自動計算 ───
 
     def _recalculate(self):
-        price = self._get_num("單價")
-        qty = self._get_num("數量")
-        discount = self._get_num("折扣")
-        special_discount = self._get_num("特殊折扣")
+        grand_total = 0
+        total_base_cost = 0
+        for rd in self.product_rows:
+            price = self._get_num_widget(rd["單價"])
+            qty = self._get_num_widget(rd["數量"])
+            discount = self._get_num_widget(rd["折扣"])
+            line_total = price * qty
+            if discount > 0:
+                line_total = line_total * discount
+            self._set_readonly(rd["總價"], line_total)
+            grand_total += line_total
+            total_base_cost += rd["_base_cost"] * qty
 
-        # 總價 = 單價 × 數量
-        total = price * qty
-        self._set_readonly("總價", total)
+        special_discount = self._get_num_widget(self.fin_inputs["特殊折扣"])
 
-        # 實拿 = 總價 × 折扣 - 特殊折扣
-        if discount > 0:
-            actual = total * discount - special_discount
-        else:
-            actual = total - special_discount
-        self._set_readonly("實拿", actual)
+        # 實拿
+        actual = grand_total - special_discount
+        self._set_readonly(self.fin_inputs["實拿"], actual)
 
-        # 成本 = 基礎成本 + 附加費用
-        base_cost = getattr(self, '_base_cost', 0)
+        # 成本 = 基礎成本 + 其他成本 + 附加費用
+        other_cost = self._get_num_widget(self.other_cost_ent)
         extra = 0
-        if self.card_fee_var.get():
-            extra += actual * 0.04
-        if self.invoice_fee_var.get():
-            extra += actual * 0.11
-        shipping = self._get_num_from_entry(self.shipping_ent)
-        final_cost = base_cost + extra + shipping
-        self._set_readonly("成本(品項+贈品)", final_cost)
+        if self.shipping_var.get():
+            extra += actual * SHIPPING_RATE
+        if self.card_invoice_var.get():
+            extra += actual * CARD_INVOICE_RATE
 
-        # 利潤 = 實拿 - 成本
+        final_cost = total_base_cost + other_cost + extra
+        self._set_readonly(self.fin_inputs["成本(品項+贈品)"], final_cost)
+
+        # 利潤
         profit = actual - final_cost
-        self._set_readonly("利潤", profit)
+        self._set_readonly(self.fin_inputs["利潤"], profit)
 
-    def _get_num(self, field):
-        try:
-            return float(self.inputs[field].get())
-        except (ValueError, TypeError):
-            return 0
+    # ─── 儲存 ───
 
-    def _get_num_from_entry(self, entry):
-        try:
-            return float(entry.get())
-        except (ValueError, TypeError):
-            return 0
-
-    def _set_readonly(self, field, value):
-        widget = self.inputs.get(field)
-        if not widget:
+    def _save(self):
+        customer = self.shared_inputs["訂購人"].get().strip()
+        phone = self.shared_inputs["電話"].get().strip()
+        if not customer or not phone:
+            messagebox.showwarning("提示", "「訂購人」與「電話」為必填欄位")
             return
-        widget.config(state="normal")
-        widget.delete(0, tk.END)
-        if value:
-            # 整數就不顯示小數點
-            val = int(value) if value == int(value) else round(value, 1)
-            widget.insert(0, str(val))
-        widget.config(state="readonly")
+
+        # 收集共用欄位
+        shared = {
+            "日期": self.shared_inputs["日期"].get().strip(),
+            "訂購人": customer,
+            "電話": phone,
+            "地址": self.shared_inputs["地址"].get().strip(),
+            "贈品": self.shared_inputs["贈品"].get().strip(),
+            "備註": self.remark_ent.get().strip(),
+            "特殊折扣": self.fin_inputs["特殊折扣"].get().strip(),
+            "付款方式": self.payment_cb.get().strip(),
+            "是否已付": self.paid_cb.get().strip(),
+        }
+
+        # 收集每個品項行
+        valid_rows = [rd for rd in self.product_rows if rd["品項"].get().strip()]
+        if not valid_rows:
+            messagebox.showwarning("提示", "至少要有一個品項")
+            return
+
+        grand_total = 0
+        total_base_cost = 0
+        lines = []
+        for rd in valid_rows:
+            qty = self._get_num_widget(rd["數量"]) or 1
+            price = self._get_num_widget(rd["單價"])
+            discount = self._get_num_widget(rd["折扣"])
+            line_total = price * qty
+            if discount > 0:
+                line_total = line_total * discount
+            base_cost = rd["_base_cost"] * qty
+            grand_total += line_total
+            total_base_cost += base_cost
+            lines.append({
+                "品項": rd["品項"].get().strip(),
+                "尺寸": rd["尺寸"].get().strip(),
+                "數量": str(int(qty)),
+                "單價": str(int(price)) if price else "",
+                "折扣": str(discount) if discount > 0 else "",
+                "總價": str(int(line_total)) if line_total else "",
+                "_base_cost": base_cost,
+                "_line_total": line_total,
+            })
+
+        # 計算財務
+        special_discount = self._get_num_widget(self.fin_inputs["特殊折扣"])
+        actual = grand_total - special_discount
+
+        other_cost = self._get_num_widget(self.other_cost_ent)
+        extra = 0
+        if self.shipping_var.get():
+            extra += actual * SHIPPING_RATE
+        if self.card_invoice_var.get():
+            extra += actual * CARD_INVOICE_RATE
+
+        final_cost = total_base_cost + other_cost + extra
+        profit = actual - final_cost
+
+        # 每行獨立儲存，按比例分配財務數據
+        for i, line in enumerate(lines):
+            ratio = line["_line_total"] / grand_total if grand_total > 0 else 1 / len(lines)
+            row = {**shared, **line}
+            row["實拿"] = str(int(actual * ratio))
+            row["成本(品項+贈品)"] = str(int((line["_base_cost"] + (other_cost + extra) * ratio)))
+            row["利潤"] = str(int(profit * ratio))
+            # 特殊折扣只記在第一行
+            if i > 0:
+                row["特殊折扣"] = ""
+            # 清理內部欄位
+            row.pop("_base_cost", None)
+            row.pop("_line_total", None)
+            self.on_save(row)
+
+        self._clear_form()
+        messagebox.showinfo("成功", f"已儲存 {len(lines)} 筆紀錄")
+
+    def _clear_form(self):
+        # 清共用欄位（保留日期）
+        for f, e in self.shared_inputs.items():
+            if f != "日期":
+                e.delete(0, tk.END)
+
+        # 清品項行（保留第一行，刪除其餘）
+        while len(self.product_rows) > 1:
+            rd = self.product_rows[-1]
+            for w in rd["_widgets"]:
+                w.destroy()
+            self.product_rows.pop()
+
+        # 清第一行
+        rd = self.product_rows[0]
+        rd["品項"].set('')
+        rd["尺寸"].set('')
+        rd["數量"].delete(0, tk.END)
+        rd["折扣"].delete(0, tk.END)
+        self._set_readonly(rd["單價"], "")
+        self._set_readonly(rd["總價"], "")
+        rd["_base_cost"] = 0
+
+        # 清財務
+        for f, e in self.fin_inputs.items():
+            if f in ("實拿", "成本(品項+贈品)", "利潤"):
+                self._set_readonly(e, "")
+            else:
+                e.delete(0, tk.END)
+
+        self.payment_cb.set('')
+        self.paid_cb.set('')
+        self.remark_ent.delete(0, tk.END)
+        self.other_cost_ent.delete(0, tk.END)
+        self.shipping_var.set(False)
+        self.card_invoice_var.set(False)
 
     # ─── 公開方法 ───
 
     def refresh_products(self):
         if self.product_db:
             self.product_db.reload()
-            self.inputs["品項"]['values'] = self.product_db.get_products()
+            products = self.product_db.get_products()
+            for rd in self.product_rows:
+                rd["品項"]['values'] = products
 
-    # ─── 儲存 ───
+    # ─── 輔助 ───
 
-    def _save(self):
-        new_row = {f: self.inputs[f].get().strip() for f in self.inputs}
-        if not new_row["訂購人"] or not new_row["電話"]:
-            messagebox.showwarning("提示", "「訂購人」與「電話」為必填欄位")
-            return
+    def _get_num_widget(self, widget):
+        try:
+            return float(widget.get())
+        except (ValueError, TypeError):
+            return 0
 
-        self.on_save(new_row)
-
-        # 清空輸入（保留日期）
-        for f, widget in self.inputs.items():
-            if f == "日期":
-                continue
-            if f in READONLY_FIELDS:
-                widget.config(state="normal")
-                widget.delete(0, tk.END)
-                widget.config(state="readonly")
-            elif isinstance(widget, ttk.Combobox):
-                widget.set('')
-            else:
-                widget.delete(0, tk.END)
-
-        self.shipping_ent.delete(0, tk.END)
-        self.card_fee_var.set(False)
-        self.invoice_fee_var.set(False)
-        self._base_cost = 0
-        messagebox.showinfo("成功", "已儲存一筆新紀錄")
+    def _set_readonly(self, widget, value):
+        widget.config(state="normal")
+        widget.delete(0, tk.END)
+        if value != "" and value is not None:
+            try:
+                v = float(value)
+                v = int(v) if v == int(v) else round(v, 1)
+                widget.insert(0, str(v))
+            except (ValueError, TypeError):
+                widget.insert(0, str(value))
+        widget.config(state="readonly")
 
     def _toggle(self, event=None):
         if self.add_visible.get():

@@ -110,7 +110,7 @@ class CustomerSystem:
     def load_master_data(self):
         if os.path.exists(MASTER_FILE):
             try:
-                self.df = pd.read_excel(MASTER_FILE).fillna("")
+                self.df = pd.read_excel(MASTER_FILE, dtype={"電話": str}).fillna("")
                 self.df["日期"] = self.df["日期"].astype(str).str.split(" ").str[0]
                 # 過濾掉合計行等非資料行
                 self.df = self.df[self.df["日期"].str.match(r'^\d{4}-', na=False)].reset_index(drop=True)
@@ -142,7 +142,7 @@ class CustomerSystem:
         count = 0
         for f in files:
             try:
-                temp = pd.read_excel(f)
+                temp = pd.read_excel(f, dtype={"電話": str})
                 rename_dict = {"姓名": "訂購人", "客戶姓名": "訂購人"}
                 temp = temp.rename(columns=rename_dict)
 

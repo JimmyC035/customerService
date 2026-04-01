@@ -87,10 +87,11 @@ class AnalyticsPanel:
                                highlightbackground=COLORS["border"], highlightthickness=1)
         chart_frame.pack(fill="both", expand=True, padx=24, pady=(0, 16))
 
-        self.fig = Figure(figsize=(12, 5), dpi=100, facecolor='white')
-        self.ax_bar = self.fig.add_subplot(121)
-        self.ax_line = self.fig.add_subplot(122)
-        self.fig.subplots_adjust(wspace=0.35, left=0.06, right=0.96, top=0.9, bottom=0.18)
+        self.fig = Figure(figsize=(14, 5), dpi=100, facecolor='white')
+        self.ax_revenue = self.fig.add_subplot(131)
+        self.ax_qty = self.fig.add_subplot(132)
+        self.ax_line = self.fig.add_subplot(133)
+        self.fig.subplots_adjust(wspace=0.45, left=0.05, right=0.97, top=0.9, bottom=0.18)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
@@ -149,7 +150,8 @@ class AnalyticsPanel:
         filtered = self._filter_by_range(df)
 
         self._update_summary(filtered)
-        self._draw_product_ranking(filtered)
+        self._draw_revenue_ranking(filtered)
+        self._draw_qty_ranking(filtered)
         self._draw_monthly_trend(filtered)
         self.canvas.draw()
 
@@ -168,24 +170,41 @@ class AnalyticsPanel:
         self.summary_cards["order_count"].config(
             text=str(count))
 
-    def _draw_product_ranking(self, df):
-        self.ax_bar.clear()
+    def _draw_revenue_ranking(self, df):
+        self.ax_revenue.clear()
         if df.empty or "品項" not in df.columns:
             return
 
         ranking = df.groupby("品項")["總價"].sum().sort_values(ascending=True).tail(10)
 
         colors = [COLORS["primary"]] * len(ranking)
-        bars = self.ax_bar.barh(ranking.index, ranking.values, color=colors, height=0.6)
-        self.ax_bar.set_title("品項銷售排行 Top 10", fontsize=12, fontweight='bold', pad=10)
-        self.ax_bar.set_xlabel("營收")
-        self.ax_bar.tick_params(axis='y', labelsize=9)
+        bars = self.ax_revenue.barh(ranking.index, ranking.values, color=colors, height=0.6)
+        self.ax_revenue.set_title("品項銷售總額", fontsize=12, fontweight='bold', pad=10)
+        self.ax_revenue.set_xlabel("營收")
+        self.ax_revenue.tick_params(axis='y', labelsize=9)
 
-        # 在 bar 上顯示數值
         for bar, val in zip(bars, ranking.values):
-            self.ax_bar.text(bar.get_width() + ranking.max() * 0.01,
+            self.ax_revenue.text(bar.get_width() + ranking.max() * 0.01,
+                                 bar.get_y() + bar.get_height() / 2,
+                                 f'${val:,.0f}', va='center', fontsize=8)
+
+    def _draw_qty_ranking(self, df):
+        self.ax_qty.clear()
+        if df.empty or "品項" not in df.columns or "數量" not in df.columns:
+            return
+
+        ranking = df.groupby("品項")["數量"].sum().sort_values(ascending=True).tail(10)
+
+        colors = [COLORS["success"]] * len(ranking)
+        bars = self.ax_qty.barh(ranking.index, ranking.values, color=colors, height=0.6)
+        self.ax_qty.set_title("品項銷售數量", fontsize=12, fontweight='bold', pad=10)
+        self.ax_qty.set_xlabel("數量")
+        self.ax_qty.tick_params(axis='y', labelsize=9)
+
+        for bar, val in zip(bars, ranking.values):
+            self.ax_qty.text(bar.get_width() + ranking.max() * 0.01,
                              bar.get_y() + bar.get_height() / 2,
-                             f'${val:,.0f}', va='center', fontsize=8)
+                             f'{val:,.0f}', va='center', fontsize=8)
 
     def _draw_monthly_trend(self, df):
         self.ax_line.clear()
