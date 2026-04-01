@@ -5,7 +5,7 @@ import os
 
 from app.constants import COLORS, PRODUCT_DB_FILE
 
-PRODUCT_COLS = ["品項", "尺寸", "單價", "成本"]
+PRODUCT_COLS = ["品項", "尺寸", "成本", "單價"]
 
 
 class ProductDatabase:
@@ -57,13 +57,24 @@ class ProductDatabase:
             return row.iloc[0]["成本"]
         return 0
 
+    def has_product(self, product, size=""):
+        df = self.df.copy()
+        df["品項"] = df["品項"].astype(str)
+        df["尺寸"] = df["尺寸"].astype(str)
+        if size:
+            return not df[(df["品項"] == str(product)) & (df["尺寸"] == str(size))].empty
+        return not df[df["品項"] == str(product)].empty
+
     def add(self, product, size, price, cost):
         new_row = {"品項": product, "尺寸": size, "單價": price, "成本": cost}
         self.df = pd.concat([self.df, pd.DataFrame([new_row])], ignore_index=True)
         self.save()
 
     def update(self, idx, product, size, price, cost):
-        self.df.loc[idx] = [product, size, price, cost]
+        self.df.at[idx, "品項"] = product
+        self.df.at[idx, "尺寸"] = size
+        self.df.at[idx, "單價"] = price
+        self.df.at[idx, "成本"] = cost
         self.save()
 
     def delete(self, idx):
@@ -151,7 +162,7 @@ class ProductManagerUI:
         table_frame = tk.Frame(table_outer, bg=COLORS["card"])
         table_frame.pack(fill="both", expand=True, padx=2, pady=2)
 
-        tree_cols = ("尺寸", "單價", "成本")
+        tree_cols = ("尺寸", "成本", "單價")
         self.tree = ttk.Treeview(table_frame, columns=tree_cols,
                                  show='tree headings', style="Custom.Treeview")
 
@@ -159,10 +170,10 @@ class ProductManagerUI:
         self.tree.column("#0", width=250, minwidth=200)
         self.tree.heading("尺寸", text="尺寸")
         self.tree.column("尺寸", width=120, anchor="center")
-        self.tree.heading("單價", text="單價")
-        self.tree.column("單價", width=150, anchor="center")
         self.tree.heading("成本", text="成本")
         self.tree.column("成本", width=150, anchor="center")
+        self.tree.heading("單價", text="單價")
+        self.tree.column("單價", width=150, anchor="center")
 
         scrollbar_y = ttk.Scrollbar(table_frame, orient="vertical",
                                     command=self.tree.yview)
@@ -231,7 +242,7 @@ class ProductManagerUI:
                 tag = ('odd',) if row_count % 2 == 1 else ()
                 self.tree.insert('', 'end', iid=f"row_{r['_orig_idx']}",
                                  text=product_name,
-                                 values=(r["尺寸"], r["單價"], r["成本"]),
+                                 values=(r["尺寸"], r["成本"], r["單價"]),
                                  tags=tag)
                 row_count += 1
             else:
@@ -249,7 +260,7 @@ class ProductManagerUI:
                     child_tag = ('odd',) if row_count % 2 == 1 else ()
                     self.tree.insert(parent_id, 'end', iid=f"row_{r['_orig_idx']}",
                                      text="",
-                                     values=(r["尺寸"], r["單價"], r["成本"]),
+                                     values=(r["尺寸"], r["成本"], r["單價"]),
                                      tags=child_tag)
                     row_count += 1
 

@@ -81,7 +81,8 @@ class CustomerSystem:
 
         self.table = TablePanel(order_tab, get_df=lambda: self.df,
                                 on_delete=self._on_delete_record,
-                                on_edit=self._on_edit_record)
+                                on_edit=self._on_edit_record,
+                                product_db=self.product_db)
         self._make_btn(self.table.btn_frame, "📥 匯入帳表", "#e3f2fd",
                        COLORS["primary"], self.import_data).pack(side="left", padx=4)
 
@@ -128,8 +129,11 @@ class CustomerSystem:
         self.save_and_refresh()
 
     def _on_edit_record(self, df_idx, new_data):
+        # 先將整欄轉為 object 型別，避免字串寫入 int64 欄位時報錯
         for col, val in new_data.items():
             if col in self.df.columns:
+                if self.df[col].dtype != object:
+                    self.df[col] = self.df[col].astype(object)
                 self.df.at[df_idx, col] = val
         self.save_and_refresh()
 
