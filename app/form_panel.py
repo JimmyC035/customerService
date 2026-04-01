@@ -6,7 +6,8 @@ from app.constants import COLORS, PAYMENT_METHODS, PAYMENT_STATUS
 
 # 費率
 SHIPPING_RATE = 0.04
-CARD_INVOICE_RATE = 0.11
+CARD_RATE = 0.03
+INVOICE_RATE = 0.05
 
 MAX_PRODUCT_ROWS = 20
 
@@ -162,10 +163,12 @@ class FormPanel:
         cb_frame.grid(row=0, column=3, padx=6, pady=6, sticky="sw")
 
         self.shipping_var = tk.BooleanVar(value=False)
-        self.card_invoice_var = tk.BooleanVar(value=False)
+        self.card_fee_var = tk.BooleanVar(value=False)
+        self.invoice_var = tk.BooleanVar(value=False)
 
         for text, var in [("運費 (4%)", self.shipping_var),
-                          ("刷卡開發票 (11%)", self.card_invoice_var)]:
+                          ("刷卡 (3%)", self.card_fee_var),
+                          ("開發票 (5%)", self.invoice_var)]:
             tk.Checkbutton(cb_frame, text=text, variable=var,
                            bg=COLORS["card"], fg=COLORS["text"],
                            activebackground=COLORS["card"],
@@ -207,14 +210,18 @@ class FormPanel:
         row_data = {}
         widgets = []
 
-        # 品項 Combobox
+        # 品項 Combobox（支援打字搜尋）
         cb_product = ttk.Combobox(self.product_grid, width=12, font=("Arial", 11))
-        if self.product_db:
-            cb_product['values'] = self.product_db.get_products()
+        all_products = self.product_db.get_products() if self.product_db else []
+        cb_product['values'] = all_products
         cb_product.grid(row=r, column=0, padx=6, pady=2, sticky="ew")
         cb_product.bind("<<ComboboxSelected>>",
                         lambda e, rd=row_data: self._on_product_selected(rd))
+        cb_product.bind("<KeyRelease>",
+                        lambda e, cb=cb_product, full=all_products, rd=row_data:
+                        self._on_product_key(e, cb, full, rd))
         row_data["品項"] = cb_product
+        row_data["_all_products"] = all_products
         widgets.append(cb_product)
 
         # 尺寸 Combobox
@@ -291,6 +298,22 @@ class FormPanel:
         self.product_rows.remove(row_data)
         self._recalculate()
 
+    # ─── 品項搜尋 ───
+
+    def _on_product_key(self, event, cb, full_list, row_data):
+        # 延遲篩選，等輸入穩定後才更新下拉選單
+        if hasattr(cb, '_filter_after_id'):
+            cb.after_cancel(cb._filter_after_id)
+        cb._filter_after_id = cb.after(300, lambda: self._filter_products(cb, full_list))
+
+    def _filter_products(self, cb, full_list):
+        typed = cb.get().strip().lower()
+        if not typed:
+            cb['values'] = full_list
+        else:
+            filtered = [p for p in full_list if typed in p.lower()]
+            cb['values'] = filtered if filtered else full_list
+
     # ─── 品項連動 ───
 
     def _on_product_selected(self, row_data):
@@ -353,8 +376,10 @@ class FormPanel:
         extra = 0
         if self.shipping_var.get():
             extra += actual * SHIPPING_RATE
-        if self.card_invoice_var.get():
-            extra += actual * CARD_INVOICE_RATE
+        if self.card_fee_var.get():
+            extra += actual * CARD_RATE
+        if self.invoice_var.get():
+            extra += actual * INVOICE_RATE
 
         final_cost = total_base_cost + other_cost + extra
         self._set_readonly(self.fin_inputs["成本(品項+贈品)"], final_cost)
@@ -423,8 +448,10 @@ class FormPanel:
         extra = 0
         if self.shipping_var.get():
             extra += actual * SHIPPING_RATE
-        if self.card_invoice_var.get():
-            extra += actual * CARD_INVOICE_RATE
+        if self.card_fee_var.get():
+            extra += actual * CARD_RATE
+        if self.invoice_var.get():
+            extra += actual * INVOICE_RATE
 
         final_cost = total_base_cost + other_cost + extra
         profit = actual - final_cost
@@ -482,7 +509,8 @@ class FormPanel:
         self.remark_ent.delete(0, tk.END)
         self.other_cost_ent.delete(0, tk.END)
         self.shipping_var.set(False)
-        self.card_invoice_var.set(False)
+        self.card_fee_var.set(False)
+        self.invoice_var.set(False)
 
     # ─── 公開方法 ───
 
@@ -492,6 +520,7 @@ class FormPanel:
             products = self.product_db.get_products()
             for rd in self.product_rows:
                 rd["品項"]['values'] = products
+                rd["_all_products"] = products
 
     # ─── 輔助 ───
 

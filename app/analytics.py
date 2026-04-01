@@ -256,7 +256,22 @@ class AnalyticsPanel:
             return
 
         self._write_report(filtered, path)
-        messagebox.showinfo("成功", f"報表已匯出至\n{path}")
+
+        # 同時匯出圖表為 PNG
+        import os
+        base = os.path.splitext(path)[0]
+        chart_path = base + "_圖表.png"
+        self.fig.savefig(chart_path, dpi=150, bbox_inches='tight',
+                         facecolor='white', edgecolor='none')
+
+        # 匯出統計 Excel
+        stats_path = base + "_統計.xlsx"
+        self._write_stats(filtered, stats_path)
+
+        messagebox.showinfo("成功",
+                            f"報表已匯出至\n{path}\n\n"
+                            f"統計已匯出至\n{stats_path}\n\n"
+                            f"圖表已匯出至\n{chart_path}")
 
     def _write_report(self, df, path):
         from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -321,3 +336,64 @@ class AnalyticsPanel:
             for col_cells in ws.columns:
                 max_len = max(len(str(cell.value or "")) for cell in col_cells)
                 ws.column_dimensions[col_cells[0].column_letter].width = max(max_len + 4, 10)
+
+    def _write_stats(self, df, path):
+        from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+
+        header_fill = PatternFill(start_color='4A6FA5', end_color='4A6FA5', fill_type='solid')
+        header_font = Font(bold=True, color='FFFFFF', size=11)
+        bold_font = Font(bold=True, size=11)
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin'))
+
+        def _style_sheet(ws):
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center')
+                cell.border = thin_border
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                for cell in row:
+                    cell.border = thin_border
+            for col_cells in ws.columns:
+                max_len = max(len(str(cell.value or "")) for cell in col_cells)
+                ws.column_dimensions[col_cells[0].column_letter].width = max(max_len + 4, 10)
+
+        with pd.ExcelWriter(path, engine='openpyxl') as writer:
+            # ── Sheet 1: 品項統計 ──
+            product_stats = df.groupby("品項").agg(
+                訂單數=("品項", "count"),
+                總數量=("數量", "sum"),
+                總營收=("總價", "sum"),
+                總利潤=("利潤", "sum"),
+            ).sort_values("總營收", ascending=False).reset_index()
+            product_stats["利潤率"] = (
+                product_stats["總利潤"] / product_stats["總營收"] * 100
+            ).round(1).astype(str) + "%"
+            product_stats.loc[product_stats["總營收"] == 0, "利潤率"] = "0%"
+            product_stats.to_excel(writer, index=False, sheet_name='品項統計')
+            _style_sheet(writer.sheets['品項統計'])
+
+            # ── Sheet 2: 月份統計 ──
+            monthly_stats = df.groupby("月份").agg(
+                訂單數=("月份", "count"),
+                總數量=("數量", "sum"),
+                總營收=("總價", "sum"),
+                總利潤=("利潤", "sum"),
+            ).sort_index().reset_index()
+            monthly_stats["利潤率"] = (
+                monthly_stats["總利潤"] / monthly_stats["總營收"] * 100
+            ).round(1).astype(str) + "%"
+            monthly_stats.loc[monthly_stats["總營收"] == 0, "利潤率"] = "0%"
+            monthly_stats.to_excel(writer, index=False, sheet_name='月份統計')
+            _style_sheet(writer.sheets['月份統計'])
+
+            # ── Sheet 3: 客戶統計 ──
+            customer_stats = df.groupby("訂購人").agg(
+                訂單數=("訂購人", "count"),
+                總營收=("總價", "sum"),
+                總利潤=("利潤", "sum"),
+            ).sort_values("總營收", ascending=False).reset_index()
+            customer_stats.to_excel(writer, index=False, sheet_name='客戶統計')
+            _style_sheet(writer.sheets['客戶統計'])
