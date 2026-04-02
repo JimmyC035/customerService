@@ -357,14 +357,8 @@ class EditProductDialog:
         self.win = tk.Toplevel(parent)
         self.win.title("修改品項")
         self.win.configure(bg=COLORS["card"])
-        self.win.geometry("400x280")
+        self.win.geometry("400x320")
         self.win.resizable(False, False)
-        self.win.grab_set()
-
-        self.win.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - 400) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - 280) // 2
-        self.win.geometry(f"+{x}+{y}")
 
         tk.Label(self.win, text="修改品項", bg=COLORS["card"], fg=COLORS["text"],
                  font=("Arial", 14, "bold")).pack(pady=(16, 12))
@@ -399,6 +393,14 @@ class EditProductDialog:
                   bg=COLORS["success"], fg="white",
                   font=("Arial", 11, "bold"), relief="flat",
                   padx=20, pady=6).pack(side="right", padx=4)
+
+        # 置中 + grab_set 放在視窗建好之後，避免 Windows 無法點擊
+        self.win.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - 400) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 320) // 2
+        self.win.geometry(f"+{x}+{y}")
+        self.win.grab_set()
+        self.win.focus_force()
 
     def _save(self):
         product = self.entries["品項"].get().strip()

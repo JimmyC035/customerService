@@ -394,7 +394,7 @@ class EditDialog:
 
         # ── 附加費用區域 ──
         SHIPPING_RATE = 0.04
-        CARD_RATE = 0.03
+        CARD_RATE = 0.02
         INVOICE_RATE = 0.05
         self._rates = (SHIPPING_RATE, CARD_RATE, INVOICE_RATE)
 
@@ -429,7 +429,7 @@ class EditDialog:
         self.invoice_var = tk.BooleanVar(value=False)
 
         for text, var in [("運費 (4%)", self.shipping_var),
-                          ("刷卡 (3%)", self.card_fee_var),
+                          ("刷卡 (2%)", self.card_fee_var),
                           ("開發票 (5%)", self.invoice_var)]:
             tk.Checkbutton(cb_row, text=text, variable=var,
                            bg=COLORS["card"], fg=COLORS["text"],

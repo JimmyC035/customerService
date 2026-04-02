@@ -6,7 +6,7 @@ from app.constants import COLORS, PAYMENT_METHODS, PAYMENT_STATUS
 
 # 費率
 SHIPPING_RATE = 0.04
-CARD_RATE = 0.03
+CARD_RATE = 0.02
 INVOICE_RATE = 0.05
 
 MAX_PRODUCT_ROWS = 20
@@ -79,8 +79,8 @@ class FormPanel:
         self.product_grid = tk.Frame(product_section, bg=COLORS["card"])
         self.product_grid.pack(fill="x")
 
-        headers = ["品項", "尺寸", "數量", "單價", "折扣", "總價", ""]
-        col_weights = [3, 2, 1, 2, 1, 2, 0]
+        headers = ["品項", "尺寸", "數量", "單價", "折扣", "總價", "成本", ""]
+        col_weights = [3, 2, 1, 2, 1, 2, 2, 0]
         for i, (h, w) in enumerate(zip(headers, col_weights)):
             tk.Label(self.product_grid, text=h, bg=COLORS["card"],
                      fg=COLORS["text_light"],
@@ -96,8 +96,6 @@ class FormPanel:
         fin_form.pack(fill="x", padx=20, pady=(4, 0))
 
         self.fin_inputs = {}
-        self._cost_manual = False
-        self._manual_cost_base = 0
         fin_fields = ["特殊折扣", "實拿", "成本(品項+贈品)", "利潤"]
         for i, field in enumerate(fin_fields):
             cell = tk.Frame(fin_form, bg=COLORS["card"])
@@ -109,9 +107,7 @@ class FormPanel:
                            insertbackground=COLORS["text"],
                            font=("Arial", 11), relief="solid",
                            highlightthickness=0, bd=1)
-            if field == "成本(品項+贈品)":
-                ent.bind("<KeyRelease>", lambda e: self._on_cost_manual_edit())
-            else:
+            if field not in ("成本(品項+贈品)", "利潤"):
                 ent.bind("<KeyRelease>", lambda e: self._recalculate())
             ent.pack(fill="x", ipady=4)
             self.fin_inputs[field] = ent
@@ -162,7 +158,7 @@ class FormPanel:
         self.invoice_var = tk.BooleanVar(value=False)
 
         for text, var in [("運費 (4%)", self.shipping_var),
-                          ("刷卡 (3%)", self.card_fee_var),
+                          ("刷卡 (2%)", self.card_fee_var),
                           ("開發票 (5%)", self.invoice_var)]:
             tk.Checkbutton(cb_frame, text=text, variable=var,
                            bg=COLORS["card"], fg=COLORS["text"],
@@ -279,8 +275,19 @@ class FormPanel:
         row_data["總價"] = ent_total
         widgets.append(ent_total)
 
-        # 隱藏的基礎成本
+        # 成本（可手動編輯，DB 會自動帶入）
+        ent_cost = tk.Entry(self.product_grid, width=10,
+                            bg=COLORS["input_bg"], fg=COLORS["text"],
+                            insertbackground=COLORS["text"],
+                            font=("Arial", 11), relief="solid",
+                            highlightthickness=0, bd=1)
+        ent_cost.grid(row=r, column=6, padx=6, pady=2, sticky="ew")
+        ent_cost.bind("<KeyRelease>",
+                      lambda e, rd=row_data: self._on_row_cost_edited(rd))
+        row_data["成本"] = ent_cost
         row_data["_base_cost"] = 0
+        row_data["_cost_manual"] = False
+        widgets.append(ent_cost)
 
         # 刪除按鈕（第一行不顯示）
         if len(self.product_rows) > 0:
@@ -288,7 +295,7 @@ class FormPanel:
                                 command=lambda rd=row_data: self._remove_product_row(rd),
                                 bg=COLORS["card"], fg="#c62828",
                                 font=("Arial", 10), relief="flat", cursor="hand2")
-            btn_del.grid(row=r, column=6, padx=2, pady=2)
+            btn_del.grid(row=r, column=7, padx=2, pady=2)
             widgets.append(btn_del)
 
         row_data["_widgets"] = widgets
@@ -340,6 +347,7 @@ class FormPanel:
         cost = self.product_db.get_cost(product, size)
         self._set_entry(row_data["單價"], price)
         row_data["_base_cost"] = float(cost) if cost else 0
+        row_data["_cost_manual"] = False
         self._on_qty_changed(row_data)
 
     def _check_manual_entry(self, row_data):
@@ -361,6 +369,7 @@ class FormPanel:
             cost = self.product_db.get_cost(product, size)
             self._set_entry(row_data["單價"], price)
             row_data["_base_cost"] = float(cost) if cost else 0
+            row_data["_cost_manual"] = False
         else:
             row_data["_base_cost"] = 0
         self._on_qty_changed(row_data)
@@ -373,6 +382,15 @@ class FormPanel:
         if discount > 0:
             total = total * discount
         self._set_entry(row_data["總價"], total)
+        # 自動模式下更新該行成本
+        if not row_data["_cost_manual"]:
+            row_cost = row_data["_base_cost"] * (qty or 1)
+            self._set_entry(row_data["成本"], row_cost)
+        self._recalculate()
+
+    def _on_row_cost_edited(self, row_data):
+        """使用者手動編輯某行成本"""
+        row_data["_cost_manual"] = True
         self._recalculate()
 
     # ─── 付款方式連動 ───
@@ -399,27 +417,9 @@ class FormPanel:
 
     # ─── 自動計算 ───
 
-    def _on_cost_manual_edit(self):
-        """使用者手動編輯成本欄位時，記錄手動基底並重算"""
-        self._cost_manual = True
-        # 記錄手動輸入值作為基底（不含 % 附加費用）
-        actual = self._get_num_widget(self.fin_inputs["實拿"])
-        extra = 0
-        if self.shipping_var.get():
-            extra += round(actual * SHIPPING_RATE)
-        if self.card_fee_var.get():
-            extra += round(actual * CARD_RATE)
-        if self.invoice_var.get():
-            extra += round(actual * INVOICE_RATE)
-        # 基底 = 使用者看到的成本 - 目前已勾的附加費用
-        self._manual_cost_base = self._get_num_widget(self.fin_inputs["成本(品項+贈品)"]) - extra
-        final_cost = self._get_num_widget(self.fin_inputs["成本(品項+贈品)"])
-        profit = actual - final_cost
-        self._set_entry(self.fin_inputs["利潤"], profit)
-
     def _recalculate(self):
         grand_total = 0
-        total_base_cost = 0
+        total_row_cost = 0
         for rd in self.product_rows:
             price = self._get_num_widget(rd["單價"])
             qty = self._get_num_widget(rd["數量"])
@@ -429,7 +429,14 @@ class FormPanel:
                 line_total = line_total * discount
             self._set_entry(rd["總價"], line_total)
             grand_total += line_total
-            total_base_cost += rd["_base_cost"] * qty
+
+            # 每行成本：手動模式讀欄位值，自動模式用 DB 成本
+            if rd["_cost_manual"]:
+                total_row_cost += self._get_num_widget(rd["成本"])
+            else:
+                row_cost = rd["_base_cost"] * (qty or 1)
+                self._set_entry(rd["成本"], row_cost)
+                total_row_cost += row_cost
 
         special_discount = self._get_num_widget(self.fin_inputs["特殊折扣"])
 
@@ -437,32 +444,18 @@ class FormPanel:
         actual = grand_total - special_discount
         self._set_entry(self.fin_inputs["實拿"], actual)
 
-        if self._cost_manual:
-            # 手動模式：基底 + 附加費用（強制更新，不受 focus 影響）
-            extra = 0
-            if self.shipping_var.get():
-                extra += round(actual * SHIPPING_RATE)
-            if self.card_fee_var.get():
-                extra += round(actual * CARD_RATE)
-            if self.invoice_var.get():
-                extra += round(actual * INVOICE_RATE)
-            final_cost = self._manual_cost_base + extra
-            w = self.fin_inputs["成本(品項+贈品)"]
-            w.delete(0, tk.END)
-            w.insert(0, str(int(final_cost) if final_cost == int(final_cost) else round(final_cost, 1)))
-        else:
-            # 自動模式：計算成本
-            other_cost = self._get_num_widget(self.other_cost_ent)
-            extra = 0
-            if self.shipping_var.get():
-                extra += round(actual * SHIPPING_RATE)
-            if self.card_fee_var.get():
-                extra += round(actual * CARD_RATE)
-            if self.invoice_var.get():
-                extra += round(actual * INVOICE_RATE)
+        # 成本 = 各品項成本加總 + 其他成本 + 附加費用
+        other_cost = self._get_num_widget(self.other_cost_ent)
+        extra = 0
+        if self.shipping_var.get():
+            extra += round(actual * SHIPPING_RATE)
+        if self.card_fee_var.get():
+            extra += round(actual * CARD_RATE)
+        if self.invoice_var.get():
+            extra += round(actual * INVOICE_RATE)
 
-            final_cost = total_base_cost + other_cost + extra
-            self._set_entry(self.fin_inputs["成本(品項+贈品)"], final_cost)
+        final_cost = total_row_cost + other_cost + extra
+        self._set_entry(self.fin_inputs["成本(品項+贈品)"], final_cost)
 
         # 利潤
         profit = actual - final_cost
@@ -497,7 +490,7 @@ class FormPanel:
             return
 
         grand_total = 0
-        total_base_cost = 0
+        total_row_cost = 0
         lines = []
         for rd in valid_rows:
             qty = self._get_num_widget(rd["數量"]) or 1
@@ -506,9 +499,9 @@ class FormPanel:
             line_total = price * qty
             if discount > 0:
                 line_total = line_total * discount
-            base_cost = rd["_base_cost"] * qty
+            row_cost = self._get_num_widget(rd["成本"])
             grand_total += line_total
-            total_base_cost += base_cost
+            total_row_cost += row_cost
             lines.append({
                 "品項": rd["品項"].get().strip(),
                 "尺寸": rd["尺寸"].get().strip(),
@@ -516,7 +509,7 @@ class FormPanel:
                 "單價": str(int(price)) if price else "",
                 "折扣": str(discount) if discount > 0 else "",
                 "總價": str(int(line_total)) if line_total else "",
-                "_base_cost": base_cost,
+                "_row_cost": row_cost,
                 "_line_total": line_total,
             })
 
@@ -533,7 +526,7 @@ class FormPanel:
         if self.invoice_var.get():
             extra += round(actual * INVOICE_RATE)
 
-        final_cost = total_base_cost + other_cost + extra
+        final_cost = total_row_cost + other_cost + extra
         profit = actual - final_cost
 
         # 每行獨立儲存，按比例分配財務數據
@@ -541,13 +534,13 @@ class FormPanel:
             ratio = line["_line_total"] / grand_total if grand_total > 0 else 1 / len(lines)
             row = {**shared, **line}
             row["實拿"] = str(round(actual * ratio))
-            row["成本(品項+贈品)"] = str(round(line["_base_cost"] + (other_cost + extra) * ratio))
-            row["利潤"] = str(round(profit * ratio))
+            row["成本(品項+贈品)"] = str(round(line["_row_cost"] + (other_cost + extra) * ratio))
+            row["利潤"] = str(round((actual * ratio) - (line["_row_cost"] + (other_cost + extra) * ratio)))
             # 特殊折扣只記在第一行
             if i > 0:
                 row["特殊折扣"] = ""
             # 清理內部欄位
-            row.pop("_base_cost", None)
+            row.pop("_row_cost", None)
             row.pop("_line_total", None)
             self.on_save(row)
 
@@ -575,11 +568,11 @@ class FormPanel:
         rd["折扣"].delete(0, tk.END)
         rd["單價"].delete(0, tk.END)
         rd["總價"].delete(0, tk.END)
+        rd["成本"].delete(0, tk.END)
         rd["_base_cost"] = 0
+        rd["_cost_manual"] = False
 
         # 清財務
-        self._cost_manual = False
-        self._manual_cost_base = 0
         for f, e in self.fin_inputs.items():
             e.delete(0, tk.END)
 
