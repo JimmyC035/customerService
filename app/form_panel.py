@@ -44,8 +44,9 @@ class FormPanel:
 
         # ── Row 1: 客戶資訊 ──
         self.shared_inputs = {}
-        row1_fields = ["日期", "訂購人", "電話", "地址", "贈品"]
-        for i, field in enumerate(row1_fields):
+        row1_fields = ["日期", "訂購人", "電話", "地址"]
+        row1_weights = [1, 1, 1, 2]
+        for i, (field, w) in enumerate(zip(row1_fields, row1_weights)):
             cell = tk.Frame(main_form, bg=COLORS["card"])
             cell.grid(row=0, column=i, padx=6, pady=6, sticky="ew")
             tk.Label(cell, text=field, bg=COLORS["card"], fg=COLORS["text_light"],
@@ -59,7 +60,7 @@ class FormPanel:
             if field == "日期":
                 ent.insert(0, datetime.now().strftime("%Y-%m-%d"))
             self.shared_inputs[field] = ent
-            main_form.columnconfigure(i, weight=1)
+            main_form.columnconfigure(i, weight=w)
 
         # ── Row 2+: 多品項區域 ──
         product_section = tk.Frame(self.add_card, bg=COLORS["card"])
@@ -79,8 +80,8 @@ class FormPanel:
         self.product_grid = tk.Frame(product_section, bg=COLORS["card"])
         self.product_grid.pack(fill="x")
 
-        headers = ["品項", "尺寸", "數量", "單價", "折扣", "總價", "成本", ""]
-        col_weights = [3, 2, 1, 2, 1, 2, 2, 0]
+        headers = ["品項", "尺寸", "數量", "單價", "折扣", "成本(單一成本)", "總價", ""]
+        col_weights = [3, 1, 1, 1, 1, 2, 2, 0]
         for i, (h, w) in enumerate(zip(headers, col_weights)):
             tk.Label(self.product_grid, text=h, bg=COLORS["card"],
                      fg=COLORS["text_light"],
@@ -95,23 +96,93 @@ class FormPanel:
         fin_form = tk.Frame(self.add_card, bg=COLORS["card"])
         fin_form.pack(fill="x", padx=20, pady=(4, 0))
 
+        self._gift_cost = 0
         self.fin_inputs = {}
-        fin_fields = ["特殊折扣", "實拿", "成本(品項+贈品)", "利潤"]
-        for i, field in enumerate(fin_fields):
-            cell = tk.Frame(fin_form, bg=COLORS["card"])
-            cell.grid(row=0, column=i, padx=6, pady=6, sticky="ew")
-            tk.Label(cell, text=field, bg=COLORS["card"], fg=COLORS["text_light"],
-                     font=("Arial", 10)).pack(anchor="w")
-            ent = tk.Entry(cell, width=14,
-                           bg=COLORS["input_bg"], fg=COLORS["text"],
-                           insertbackground=COLORS["text"],
-                           font=("Arial", 11), relief="solid",
-                           highlightthickness=0, bd=1)
-            if field not in ("成本(品項+贈品)", "利潤"):
-                ent.bind("<KeyRelease>", lambda e: self._recalculate())
-            ent.pack(fill="x", ipady=4)
-            self.fin_inputs[field] = ent
-            fin_form.columnconfigure(i, weight=1)
+
+        # 贈品 (column 0)
+        gift_cell = tk.Frame(fin_form, bg=COLORS["card"])
+        gift_cell.grid(row=0, column=0, padx=6, pady=6, sticky="ew")
+        tk.Label(gift_cell, text="贈品", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        gift_values = self.product_db.get_gifts() if self.product_db and hasattr(self.product_db, 'get_gifts') else []
+        self.gift_cb = ttk.Combobox(gift_cell, width=12, font=("Arial", 11),
+                                     values=gift_values)
+        self.gift_cb.pack(fill="x", ipady=4)
+        self.gift_cb.bind("<<ComboboxSelected>>", self._on_gift_selected)
+
+        # 特殊折扣 (column 1)
+        fin_col1_cell = tk.Frame(fin_form, bg=COLORS["card"])
+        fin_col1_cell.grid(row=0, column=1, padx=6, pady=6, sticky="ew")
+        tk.Label(fin_col1_cell, text="特殊折扣", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        ent_sd = tk.Entry(fin_col1_cell, width=14,
+                          bg=COLORS["input_bg"], fg=COLORS["text"],
+                          insertbackground=COLORS["text"],
+                          font=("Arial", 11), relief="solid",
+                          highlightthickness=0, bd=1)
+        ent_sd.bind("<KeyRelease>", lambda e: self._recalculate())
+        ent_sd.pack(fill="x", ipady=4)
+        self.fin_inputs["特殊折扣"] = ent_sd
+
+        # 實拿 (column 2)
+        fin_col2_cell = tk.Frame(fin_form, bg=COLORS["card"])
+        fin_col2_cell.grid(row=0, column=2, padx=6, pady=6, sticky="ew")
+        tk.Label(fin_col2_cell, text="實拿", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        ent_actual = tk.Entry(fin_col2_cell, width=14,
+                              bg=COLORS["input_bg"], fg=COLORS["text"],
+                              insertbackground=COLORS["text"],
+                              font=("Arial", 11), relief="solid",
+                              highlightthickness=0, bd=1)
+        ent_actual.bind("<KeyRelease>", lambda e: self._recalculate())
+        ent_actual.pack(fill="x", ipady=4)
+        self.fin_inputs["實拿"] = ent_actual
+
+        # 成本(所有品項+贈品) (column 3)
+        fin_col3_cell = tk.Frame(fin_form, bg=COLORS["card"])
+        fin_col3_cell.grid(row=0, column=3, padx=6, pady=6, sticky="ew")
+        tk.Label(fin_col3_cell, text="成本(所有品項+贈品)", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        ent_cost = tk.Entry(fin_col3_cell, width=14,
+                            bg=COLORS["input_bg"], fg=COLORS["text"],
+                            insertbackground=COLORS["text"],
+                            font=("Arial", 11), relief="solid",
+                            highlightthickness=0, bd=1)
+        ent_cost.pack(fill="x", ipady=4)
+        self.fin_inputs["成本(所有品項+贈品)"] = ent_cost
+
+        # 其他成本 (column 4)
+        fin_col4_cell = tk.Frame(fin_form, bg=COLORS["card"])
+        fin_col4_cell.grid(row=0, column=4, padx=6, pady=6, sticky="ew")
+        tk.Label(fin_col4_cell, text="其他成本", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        self.other_cost_ent = tk.Entry(fin_col4_cell, width=14,
+                                        bg=COLORS["input_bg"], fg=COLORS["text"],
+                                        insertbackground=COLORS["text"],
+                                        font=("Arial", 11), relief="solid",
+                                        highlightthickness=0, bd=1)
+        self.other_cost_ent.pack(fill="x", ipady=4)
+        self.other_cost_ent.bind("<KeyRelease>", lambda e: self._recalculate())
+
+        # 利潤 (column 5)
+        fin_col5_cell = tk.Frame(fin_form, bg=COLORS["card"])
+        fin_col5_cell.grid(row=0, column=5, padx=6, pady=6, sticky="ew")
+        tk.Label(fin_col5_cell, text="利潤", bg=COLORS["card"], fg=COLORS["text_light"],
+                 font=("Arial", 10)).pack(anchor="w")
+        ent_profit = tk.Entry(fin_col5_cell, width=14,
+                              bg=COLORS["input_bg"], fg=COLORS["text"],
+                              insertbackground=COLORS["text"],
+                              font=("Arial", 11), relief="solid",
+                              highlightthickness=0, bd=1)
+        ent_profit.pack(fill="x", ipady=4)
+        self.fin_inputs["利潤"] = ent_profit
+
+        fin_form.columnconfigure(0, weight=1)
+        fin_form.columnconfigure(1, weight=1)
+        fin_form.columnconfigure(2, weight=2)
+        fin_form.columnconfigure(3, weight=2)
+        fin_form.columnconfigure(4, weight=1)
+        fin_form.columnconfigure(5, weight=1)
 
         # ── Row 4: 付款 / 附加費用 ──
         pay_form = tk.Frame(self.add_card, bg=COLORS["card"])
@@ -136,22 +207,9 @@ class FormPanel:
                                      values=PAYMENT_STATUS)
         self.paid_cb.pack(fill="x", ipady=4)
 
-        # 其他成本
-        cell3 = tk.Frame(pay_form, bg=COLORS["card"])
-        cell3.grid(row=0, column=2, padx=6, pady=6, sticky="ew")
-        tk.Label(cell3, text="其他成本", bg=COLORS["card"], fg=COLORS["text_light"],
-                 font=("Arial", 10)).pack(anchor="w")
-        self.other_cost_ent = tk.Entry(cell3, width=14,
-                                        bg=COLORS["input_bg"], fg=COLORS["text"],
-                                        insertbackground=COLORS["text"],
-                                        font=("Arial", 11), relief="solid",
-                                        highlightthickness=0, bd=1)
-        self.other_cost_ent.pack(fill="x", ipady=4)
-        self.other_cost_ent.bind("<KeyRelease>", lambda e: self._recalculate())
-
         # 勾選框
         cb_frame = tk.Frame(pay_form, bg=COLORS["card"])
-        cb_frame.grid(row=0, column=3, padx=6, pady=6, sticky="sw")
+        cb_frame.grid(row=0, column=2, padx=6, pady=6, sticky="sw")
 
         self.shipping_var = tk.BooleanVar(value=False)
         self.card_fee_var = tk.BooleanVar(value=False)
@@ -166,8 +224,9 @@ class FormPanel:
                            font=("Arial", 10), command=self._recalculate
                            ).pack(side="left", padx=(0, 12))
 
-        for i in range(4):
-            pay_form.columnconfigure(i, weight=1)
+        pay_form.columnconfigure(0, weight=1)
+        pay_form.columnconfigure(1, weight=1)
+        pay_form.columnconfigure(2, weight=2)
 
         # ── 備註 + 儲存 ──
         bottom = tk.Frame(self.add_card, bg=COLORS["card"])
@@ -263,31 +322,31 @@ class FormPanel:
         row_data["折扣"] = ent_discount
         widgets.append(ent_discount)
 
-        # 總價
-        ent_total = tk.Entry(self.product_grid, width=10,
-                             bg=COLORS["input_bg"], fg=COLORS["text"],
-                             insertbackground=COLORS["text"],
-                             font=("Arial", 11), relief="solid",
-                             highlightthickness=0, bd=1)
-        ent_total.grid(row=r, column=5, padx=6, pady=2, sticky="ew")
-        ent_total.bind("<KeyRelease>",
-                       lambda e, rd=row_data: self._recalculate())
-        row_data["總價"] = ent_total
-        widgets.append(ent_total)
-
         # 成本（可手動編輯，DB 會自動帶入）
         ent_cost = tk.Entry(self.product_grid, width=10,
                             bg=COLORS["input_bg"], fg=COLORS["text"],
                             insertbackground=COLORS["text"],
                             font=("Arial", 11), relief="solid",
                             highlightthickness=0, bd=1)
-        ent_cost.grid(row=r, column=6, padx=6, pady=2, sticky="ew")
+        ent_cost.grid(row=r, column=5, padx=6, pady=2, sticky="ew")
         ent_cost.bind("<KeyRelease>",
                       lambda e, rd=row_data: self._on_row_cost_edited(rd))
         row_data["成本"] = ent_cost
         row_data["_base_cost"] = 0
         row_data["_cost_manual"] = False
         widgets.append(ent_cost)
+
+        # 總價
+        ent_total = tk.Entry(self.product_grid, width=10,
+                             bg=COLORS["input_bg"], fg=COLORS["text"],
+                             insertbackground=COLORS["text"],
+                             font=("Arial", 11), relief="solid",
+                             highlightthickness=0, bd=1)
+        ent_total.grid(row=r, column=6, padx=6, pady=2, sticky="ew")
+        ent_total.bind("<KeyRelease>",
+                       lambda e, rd=row_data: self._recalculate())
+        row_data["總價"] = ent_total
+        widgets.append(ent_total)
 
         # 刪除按鈕（第一行不顯示）
         if len(self.product_rows) > 0:
@@ -415,6 +474,16 @@ class FormPanel:
             self.invoice_var.set(True)
         self._recalculate()
 
+    # ─── 贈品連動 ───
+
+    def _on_gift_selected(self, event=None):
+        name = self.gift_cb.get().strip()
+        if name and self.product_db and hasattr(self.product_db, 'get_gift_cost'):
+            self._gift_cost = float(self.product_db.get_gift_cost(name) or 0)
+        else:
+            self._gift_cost = 0
+        self._recalculate()
+
     # ─── 自動計算 ───
 
     def _recalculate(self):
@@ -454,8 +523,8 @@ class FormPanel:
         if self.invoice_var.get():
             extra += round(actual * INVOICE_RATE)
 
-        final_cost = total_row_cost + other_cost + extra
-        self._set_entry(self.fin_inputs["成本(品項+贈品)"], final_cost)
+        final_cost = total_row_cost + self._gift_cost + other_cost + extra
+        self._set_entry(self.fin_inputs["成本(所有品項+贈品)"], final_cost)
 
         # 利潤
         profit = actual - final_cost
@@ -476,7 +545,7 @@ class FormPanel:
             "訂購人": customer,
             "電話": phone,
             "地址": self.shared_inputs["地址"].get().strip(),
-            "贈品": self.shared_inputs["贈品"].get().strip(),
+            "贈品": self.gift_cb.get().strip(),
             "備註": self.remark_ent.get().strip(),
             "特殊折扣": self.fin_inputs["特殊折扣"].get().strip(),
             "付款方式": self.payment_cb.get().strip(),
@@ -526,7 +595,7 @@ class FormPanel:
         if self.invoice_var.get():
             extra += round(actual * INVOICE_RATE)
 
-        final_cost = total_row_cost + other_cost + extra
+        final_cost = total_row_cost + self._gift_cost + other_cost + extra
         profit = actual - final_cost
 
         # 每行獨立儲存，按比例分配財務數據
@@ -576,6 +645,8 @@ class FormPanel:
         for f, e in self.fin_inputs.items():
             e.delete(0, tk.END)
 
+        self.gift_cb.set('')
+        self._gift_cost = 0
         self.payment_cb.set('')
         self.paid_cb.set('')
         self.remark_ent.delete(0, tk.END)
@@ -593,6 +664,8 @@ class FormPanel:
             for rd in self.product_rows:
                 rd["品項"]['values'] = products
                 rd["_all_products"] = products
+            if hasattr(self.product_db, 'get_gifts'):
+                self.gift_cb['values'] = self.product_db.get_gifts()
 
     # ─── 輔助 ───
 

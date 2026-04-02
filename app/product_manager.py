@@ -6,6 +6,7 @@ import os
 from app.constants import COLORS, PRODUCT_DB_FILE
 
 PRODUCT_COLS = ["品項", "尺寸", "成本", "單價"]
+GIFT_COLS = ["贈品名稱", "成本"]
 
 
 class ProductDatabase:
@@ -17,14 +18,24 @@ class ProductDatabase:
     def reload(self):
         if os.path.exists(PRODUCT_DB_FILE):
             try:
-                self.df = pd.read_excel(PRODUCT_DB_FILE).fillna("")
+                self.df = pd.read_excel(PRODUCT_DB_FILE, sheet_name="品項").fillna("")
             except Exception:
-                self.df = pd.DataFrame(columns=PRODUCT_COLS)
+                try:
+                    self.df = pd.read_excel(PRODUCT_DB_FILE).fillna("")
+                except Exception:
+                    self.df = pd.DataFrame(columns=PRODUCT_COLS)
+            try:
+                self.gift_df = pd.read_excel(PRODUCT_DB_FILE, sheet_name="贈品").fillna("")
+            except Exception:
+                self.gift_df = pd.DataFrame(columns=GIFT_COLS)
         else:
             self.df = pd.DataFrame(columns=PRODUCT_COLS)
+            self.gift_df = pd.DataFrame(columns=GIFT_COLS)
 
     def save(self):
-        self.df.to_excel(PRODUCT_DB_FILE, index=False)
+        with pd.ExcelWriter(PRODUCT_DB_FILE) as writer:
+            self.df.to_excel(writer, sheet_name='品項', index=False)
+            self.gift_df.to_excel(writer, sheet_name='贈品', index=False)
 
     def get_products(self):
         return sorted(self.df["品項"].astype(str).unique().tolist())
@@ -85,6 +96,33 @@ class ProductDatabase:
         self.df = self.df[self.df["品項"] != product].reset_index(drop=True)
         self.save()
 
+    # ── 贈品相關方法 ──
+
+    def get_gifts(self):
+        return sorted(self.gift_df["贈品名稱"].astype(str).unique().tolist())
+
+    def get_gift_cost(self, name):
+        df = self.gift_df.copy()
+        df["贈品名稱"] = df["贈品名稱"].astype(str)
+        row = df[df["贈品名稱"] == str(name)]
+        if not row.empty:
+            return row.iloc[0]["成本"]
+        return 0
+
+    def add_gift(self, name, cost):
+        new_row = {"贈品名稱": name, "成本": cost}
+        self.gift_df = pd.concat([self.gift_df, pd.DataFrame([new_row])], ignore_index=True)
+        self.save()
+
+    def update_gift(self, idx, name, cost):
+        self.gift_df.at[idx, "贈品名稱"] = name
+        self.gift_df.at[idx, "成本"] = cost
+        self.save()
+
+    def delete_gift(self, idx):
+        self.gift_df = self.gift_df.drop(idx).reset_index(drop=True)
+        self.save()
+
 
 class ProductManagerUI:
     """品項管理分頁 — 樹狀結構（品項 → 尺寸/單價/成本）"""
@@ -94,10 +132,43 @@ class ProductManagerUI:
         self.db = product_db
         self._build_ui()
         self.refresh_table()
+        self.refresh_gift_table()
 
     def _build_ui(self):
+        # 可捲動外框
+        canvas = tk.Canvas(self.parent, bg=COLORS["bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.parent, orient="vertical", command=canvas.yview)
+        self._scroll_frame = tk.Frame(canvas, bg=COLORS["bg"])
+
+        self._scroll_frame.bind("<Configure>",
+                                lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_win = canvas.create_window((0, 0), window=self._scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(canvas_win, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        # 滑鼠滾輪
+        def _on_mousewheel(event):
+            canvas.yview_scroll(-1 * (event.delta // 120 or (-1 if event.delta < 0 else 1)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        # ── 上半部：品項管理 ──
+        product_frame = tk.LabelFrame(self._scroll_frame, text="品項管理",
+                                       bg=COLORS["card"], fg=COLORS["text"],
+                                       font=("Arial", 13, "bold"),
+                                       highlightbackground=COLORS["border"],
+                                       highlightthickness=1)
+        product_frame.pack(fill="x", padx=16, pady=(12, 4))
+
         # 上方新增區
-        add_card = tk.Frame(self.parent, bg=COLORS["card"],
+        add_card = tk.Frame(product_frame, bg=COLORS["card"],
                             highlightbackground=COLORS["border"], highlightthickness=1)
         add_card.pack(fill="x", padx=24, pady=(16, 8))
 
@@ -133,7 +204,7 @@ class ProductManagerUI:
                   padx=16, pady=6, cursor="hand2").pack(side="left", padx=4, pady=(18, 0))
 
         # 搜尋列
-        search_frame = tk.Frame(self.parent, bg=COLORS["card"],
+        search_frame = tk.Frame(product_frame, bg=COLORS["card"],
                                 highlightbackground=COLORS["border"], highlightthickness=1)
         search_frame.pack(fill="x", padx=24, pady=(0, 8))
 
@@ -155,16 +226,17 @@ class ProductManagerUI:
         self.search_ent.bind("<KeyRelease>", lambda e: self._search())
 
         # 下方樹狀表格
-        table_outer = tk.Frame(self.parent, bg=COLORS["card"],
+        table_outer = tk.Frame(product_frame, bg=COLORS["card"],
                                highlightbackground=COLORS["border"], highlightthickness=1)
-        table_outer.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        table_outer.pack(fill="x", padx=24, pady=(0, 16))
 
         table_frame = tk.Frame(table_outer, bg=COLORS["card"])
         table_frame.pack(fill="both", expand=True, padx=2, pady=2)
 
         tree_cols = ("尺寸", "成本", "單價")
         self.tree = ttk.Treeview(table_frame, columns=tree_cols,
-                                 show='tree headings', style="Custom.Treeview")
+                                 show='tree headings', style="Custom.Treeview",
+                                 height=10)
 
         self.tree.heading("#0", text="品項", anchor="w")
         self.tree.column("#0", width=250, minwidth=200)
@@ -192,6 +264,92 @@ class ProductManagerUI:
         self.tree.bind("<Button-2>", self._show_context_menu)
         self.tree.bind("<Button-3>", self._show_context_menu)
         self.tree.bind("<Control-Button-1>", self._show_context_menu)
+
+        # ── 下半部：贈品管理 ──
+        gift_frame = tk.LabelFrame(self._scroll_frame, text="贈品管理",
+                                    bg=COLORS["card"], fg=COLORS["text"],
+                                    font=("Arial", 13, "bold"),
+                                    highlightbackground=COLORS["border"],
+                                    highlightthickness=1)
+        gift_frame.pack(fill="x", padx=16, pady=(4, 12))
+
+        # 贈品新增區
+        gift_add_card = tk.Frame(gift_frame, bg=COLORS["card"],
+                                  highlightbackground=COLORS["border"], highlightthickness=1)
+        gift_add_card.pack(fill="x", padx=24, pady=(16, 8))
+
+        gift_form = tk.Frame(gift_add_card, bg=COLORS["card"])
+        gift_form.pack(fill="x", padx=20, pady=12)
+
+        self.gift_inputs = {}
+        for i, field in enumerate(GIFT_COLS):
+            cell = tk.Frame(gift_form, bg=COLORS["card"])
+            cell.grid(row=0, column=i, padx=8, pady=4, sticky="ew")
+            tk.Label(cell, text=field, bg=COLORS["card"], fg=COLORS["text_light"],
+                     font=("Arial", 10)).pack(anchor="w")
+            ent = tk.Entry(cell, width=16,
+                           bg=COLORS["input_bg"], fg=COLORS["text"],
+                           insertbackground=COLORS["text"],
+                           font=("Arial", 11), relief="solid",
+                           highlightthickness=0, bd=1)
+            ent.pack(fill="x", ipady=4)
+            self.gift_inputs[field] = ent
+            gift_form.columnconfigure(i, weight=1)
+
+        gift_btn_cell = tk.Frame(gift_form, bg=COLORS["card"])
+        gift_btn_cell.grid(row=0, column=len(GIFT_COLS), padx=8, pady=4)
+
+        tk.Button(gift_btn_cell, text="新增", command=self._add_gift,
+                  bg=COLORS["success"], fg="white",
+                  font=("Arial", 11, "bold"), relief="flat",
+                  padx=16, pady=6, cursor="hand2").pack(side="left", padx=4, pady=(18, 0))
+
+        # 贈品表格
+        gift_table_outer = tk.Frame(gift_frame, bg=COLORS["card"],
+                                     highlightbackground=COLORS["border"], highlightthickness=1)
+        gift_table_outer.pack(fill="x", padx=24, pady=(0, 16))
+
+        gift_table_frame = tk.Frame(gift_table_outer, bg=COLORS["card"])
+        gift_table_frame.pack(fill="both", expand=True, padx=2, pady=2)
+
+        gift_tree_cols = ("成本",)
+        self.gift_tree = ttk.Treeview(gift_table_frame, columns=gift_tree_cols,
+                                       show='headings', style="Custom.Treeview",
+                                       height=6)
+
+        self.gift_tree.heading("成本", text="成本")
+        self.gift_tree.column("成本", width=150, anchor="center")
+
+        # Add 贈品名稱 as a column instead of tree column
+        self.gift_tree["columns"] = ("贈品名稱", "成本")
+        self.gift_tree.heading("贈品名稱", text="贈品名稱")
+        self.gift_tree.column("贈品名稱", width=250, anchor="center")
+        self.gift_tree.heading("成本", text="成本")
+        self.gift_tree.column("成本", width=150, anchor="center")
+
+        gift_scrollbar_y = ttk.Scrollbar(gift_table_frame, orient="vertical",
+                                          command=self.gift_tree.yview)
+        self.gift_tree.configure(yscrollcommand=gift_scrollbar_y.set)
+        gift_scrollbar_y.pack(side="right", fill="y")
+        self.gift_tree.pack(side="left", fill="both", expand=True)
+
+        self.gift_tree.tag_configure('odd', background=COLORS["table_row_alt"])
+
+        # 贈品右鍵選單
+        self.gift_ctx_menu = tk.Menu(self.gift_tree, tearoff=0)
+        self.gift_ctx_menu.add_command(label="✏️  修改", command=self._edit_gift_selected)
+        self.gift_ctx_menu.add_command(label="🗑  刪除", command=self._delete_gift_selected)
+
+        self.gift_tree.bind("<Button-2>", self._show_gift_context_menu)
+        self.gift_tree.bind("<Button-3>", self._show_gift_context_menu)
+        self.gift_tree.bind("<Control-Button-1>", self._show_gift_context_menu)
+
+    def _show_gift_context_menu(self, event):
+        item = self.gift_tree.identify_row(event.y)
+        if not item:
+            return
+        self.gift_tree.selection_set(item)
+        self.gift_ctx_menu.tk_popup(event.x_root, event.y_root)
 
     def _show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
@@ -345,6 +503,59 @@ class ProductManagerUI:
         for ent in self.pm_inputs.values():
             ent.delete(0, tk.END)
 
+    # ── 贈品管理方法 ──
+
+    def refresh_gift_table(self):
+        self.db.reload()
+        for r in self.gift_tree.get_children():
+            self.gift_tree.delete(r)
+
+        df = self.db.gift_df.copy()
+        df["贈品名稱"] = df["贈品名稱"].astype(str)
+
+        for i, (_, row) in enumerate(df.iterrows()):
+            tag = ('odd',) if i % 2 == 1 else ()
+            self.gift_tree.insert('', 'end', iid=f"gift_{i}",
+                                   values=(row["贈品名稱"], row["成本"]),
+                                   tags=tag)
+
+    def _add_gift(self):
+        name = self.gift_inputs["贈品名稱"].get().strip()
+        if not name:
+            messagebox.showwarning("提示", "贈品名稱不能為空")
+            return
+        try:
+            cost = float(self.gift_inputs["成本"].get().strip() or 0)
+        except ValueError:
+            messagebox.showwarning("提示", "成本必須是數字")
+            return
+
+        self.db.add_gift(name, cost)
+        self.refresh_gift_table()
+        for ent in self.gift_inputs.values():
+            ent.delete(0, tk.END)
+
+    def _edit_gift_selected(self):
+        sel = self.gift_tree.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        idx = int(item_id.replace("gift_", ""))
+        row = self.db.gift_df.iloc[idx]
+        EditGiftDialog(self.gift_tree.winfo_toplevel(), row, idx, self.db, self.refresh_gift_table)
+
+    def _delete_gift_selected(self):
+        sel = self.gift_tree.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        idx = int(item_id.replace("gift_", ""))
+        row = self.db.gift_df.iloc[idx]
+        name = str(row["贈品名稱"])
+        if messagebox.askyesno("確認", f"確定要刪除贈品「{name}」？"):
+            self.db.delete_gift(idx)
+            self.refresh_gift_table()
+
 
 class EditProductDialog:
     """修改品項的彈窗"""
@@ -420,5 +631,77 @@ class EditProductDialog:
             return
 
         self.db.update(self.idx, product, size, price, cost)
+        self.on_done()
+        self.win.destroy()
+
+
+class EditGiftDialog:
+    """修改贈品的彈窗"""
+
+    def __init__(self, parent, row, idx, db, on_done):
+        self.db = db
+        self.idx = idx
+        self.on_done = on_done
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("修改贈品")
+        self.win.configure(bg=COLORS["card"])
+        self.win.geometry("400x240")
+        self.win.resizable(False, False)
+
+        tk.Label(self.win, text="修改贈品", bg=COLORS["card"], fg=COLORS["text"],
+                 font=("Arial", 14, "bold")).pack(pady=(16, 12))
+
+        self.entries = {}
+        form = tk.Frame(self.win, bg=COLORS["card"])
+        form.pack(fill="x", padx=24)
+
+        for field in GIFT_COLS:
+            row_frame = tk.Frame(form, bg=COLORS["card"])
+            row_frame.pack(fill="x", pady=4)
+            tk.Label(row_frame, text=field, width=8, anchor="e",
+                     bg=COLORS["card"], fg=COLORS["text_light"],
+                     font=("Arial", 11)).pack(side="left", padx=(0, 8))
+            ent = tk.Entry(row_frame,
+                           bg=COLORS["input_bg"], fg=COLORS["text"],
+                           insertbackground=COLORS["text"],
+                           font=("Arial", 11), relief="solid",
+                           highlightthickness=0, bd=1)
+            ent.pack(side="left", fill="x", expand=True, ipady=4)
+            ent.insert(0, str(row[field]))
+            self.entries[field] = ent
+
+        btn_frame = tk.Frame(self.win, bg=COLORS["card"])
+        btn_frame.pack(fill="x", padx=24, pady=16)
+
+        tk.Button(btn_frame, text="取消", command=self.win.destroy,
+                  bg=COLORS["border"], fg=COLORS["text"],
+                  font=("Arial", 11), relief="flat",
+                  padx=20, pady=6).pack(side="right", padx=4)
+        tk.Button(btn_frame, text="儲存", command=self._save,
+                  bg=COLORS["success"], fg="white",
+                  font=("Arial", 11, "bold"), relief="flat",
+                  padx=20, pady=6).pack(side="right", padx=4)
+
+        # 置中 + grab_set
+        self.win.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - 400) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 240) // 2
+        self.win.geometry(f"+{x}+{y}")
+        self.win.grab_set()
+        self.win.focus_force()
+
+    def _save(self):
+        name = self.entries["贈品名稱"].get().strip()
+        if not name:
+            messagebox.showwarning("提示", "贈品名稱不能為空")
+            return
+        try:
+            cost = float(self.entries["成本"].get().strip() or 0)
+        except ValueError:
+            messagebox.showwarning("提示", "成本必須是數字")
+            return
+
+        self.db.update_gift(self.idx, name, cost)
         self.on_done()
         self.win.destroy()
