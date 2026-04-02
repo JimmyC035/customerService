@@ -96,6 +96,8 @@ class FormPanel:
         fin_form.pack(fill="x", padx=20, pady=(4, 0))
 
         self.fin_inputs = {}
+        self._cost_manual = False
+        self._manual_cost_base = 0
         fin_fields = ["特殊折扣", "實拿", "成本(品項+贈品)", "利潤"]
         for i, field in enumerate(fin_fields):
             cell = tk.Frame(fin_form, bg=COLORS["card"])
@@ -107,7 +109,10 @@ class FormPanel:
                            insertbackground=COLORS["text"],
                            font=("Arial", 11), relief="solid",
                            highlightthickness=0, bd=1)
-            ent.bind("<KeyRelease>", lambda e: self._recalculate())
+            if field == "成本(品項+贈品)":
+                ent.bind("<KeyRelease>", lambda e: self._on_cost_manual_edit())
+            else:
+                ent.bind("<KeyRelease>", lambda e: self._recalculate())
             ent.pack(fill="x", ipady=4)
             self.fin_inputs[field] = ent
             fin_form.columnconfigure(i, weight=1)
@@ -394,6 +399,24 @@ class FormPanel:
 
     # ─── 自動計算 ───
 
+    def _on_cost_manual_edit(self):
+        """使用者手動編輯成本欄位時，記錄手動基底並重算"""
+        self._cost_manual = True
+        # 記錄手動輸入值作為基底（不含 % 附加費用）
+        actual = self._get_num_widget(self.fin_inputs["實拿"])
+        extra = 0
+        if self.shipping_var.get():
+            extra += round(actual * SHIPPING_RATE)
+        if self.card_fee_var.get():
+            extra += round(actual * CARD_RATE)
+        if self.invoice_var.get():
+            extra += round(actual * INVOICE_RATE)
+        # 基底 = 使用者看到的成本 - 目前已勾的附加費用
+        self._manual_cost_base = self._get_num_widget(self.fin_inputs["成本(品項+贈品)"]) - extra
+        final_cost = self._get_num_widget(self.fin_inputs["成本(品項+贈品)"])
+        profit = actual - final_cost
+        self._set_entry(self.fin_inputs["利潤"], profit)
+
     def _recalculate(self):
         grand_total = 0
         total_base_cost = 0
@@ -414,18 +437,32 @@ class FormPanel:
         actual = grand_total - special_discount
         self._set_entry(self.fin_inputs["實拿"], actual)
 
-        # 成本 = 基礎成本 + 其他成本 + 附加費用
-        other_cost = self._get_num_widget(self.other_cost_ent)
-        extra = 0
-        if self.shipping_var.get():
-            extra += actual * SHIPPING_RATE
-        if self.card_fee_var.get():
-            extra += actual * CARD_RATE
-        if self.invoice_var.get():
-            extra += actual * INVOICE_RATE
+        if self._cost_manual:
+            # 手動模式：基底 + 附加費用（強制更新，不受 focus 影響）
+            extra = 0
+            if self.shipping_var.get():
+                extra += round(actual * SHIPPING_RATE)
+            if self.card_fee_var.get():
+                extra += round(actual * CARD_RATE)
+            if self.invoice_var.get():
+                extra += round(actual * INVOICE_RATE)
+            final_cost = self._manual_cost_base + extra
+            w = self.fin_inputs["成本(品項+贈品)"]
+            w.delete(0, tk.END)
+            w.insert(0, str(int(final_cost) if final_cost == int(final_cost) else round(final_cost, 1)))
+        else:
+            # 自動模式：計算成本
+            other_cost = self._get_num_widget(self.other_cost_ent)
+            extra = 0
+            if self.shipping_var.get():
+                extra += round(actual * SHIPPING_RATE)
+            if self.card_fee_var.get():
+                extra += round(actual * CARD_RATE)
+            if self.invoice_var.get():
+                extra += round(actual * INVOICE_RATE)
 
-        final_cost = total_base_cost + other_cost + extra
-        self._set_entry(self.fin_inputs["成本(品項+贈品)"], final_cost)
+            final_cost = total_base_cost + other_cost + extra
+            self._set_entry(self.fin_inputs["成本(品項+贈品)"], final_cost)
 
         # 利潤
         profit = actual - final_cost
@@ -490,11 +527,11 @@ class FormPanel:
         other_cost = self._get_num_widget(self.other_cost_ent)
         extra = 0
         if self.shipping_var.get():
-            extra += actual * SHIPPING_RATE
+            extra += round(actual * SHIPPING_RATE)
         if self.card_fee_var.get():
-            extra += actual * CARD_RATE
+            extra += round(actual * CARD_RATE)
         if self.invoice_var.get():
-            extra += actual * INVOICE_RATE
+            extra += round(actual * INVOICE_RATE)
 
         final_cost = total_base_cost + other_cost + extra
         profit = actual - final_cost
@@ -503,9 +540,9 @@ class FormPanel:
         for i, line in enumerate(lines):
             ratio = line["_line_total"] / grand_total if grand_total > 0 else 1 / len(lines)
             row = {**shared, **line}
-            row["實拿"] = str(int(actual * ratio))
-            row["成本(品項+贈品)"] = str(int((line["_base_cost"] + (other_cost + extra) * ratio)))
-            row["利潤"] = str(int(profit * ratio))
+            row["實拿"] = str(round(actual * ratio))
+            row["成本(品項+贈品)"] = str(round(line["_base_cost"] + (other_cost + extra) * ratio))
+            row["利潤"] = str(round(profit * ratio))
             # 特殊折扣只記在第一行
             if i > 0:
                 row["特殊折扣"] = ""
@@ -541,6 +578,8 @@ class FormPanel:
         rd["_base_cost"] = 0
 
         # 清財務
+        self._cost_manual = False
+        self._manual_cost_base = 0
         for f, e in self.fin_inputs.items():
             e.delete(0, tk.END)
 

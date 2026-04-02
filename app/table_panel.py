@@ -99,6 +99,14 @@ class TablePanel:
 
     def _build_context_menu(self):
         self.ctx_menu = tk.Menu(self.tree, tearoff=0)
+
+        # 複製子選單
+        copy_menu = tk.Menu(self.ctx_menu, tearoff=0)
+        copy_menu.add_command(label="全部欄位", command=self._copy_selected)
+        copy_menu.add_command(label="地址", command=lambda: self._copy_column("地址"))
+        copy_menu.add_command(label="電話", command=lambda: self._copy_column("電話"))
+        self.ctx_menu.add_cascade(label="📋  複製", menu=copy_menu)
+
         self.ctx_menu.add_command(label="✏️  修改此筆", command=self._edit_selected)
         self.ctx_menu.add_command(label="🗑  刪除此筆", command=self._delete_selected)
 
@@ -107,6 +115,10 @@ class TablePanel:
         self.tree.bind("<Button-3>", self._show_context_menu)
         # macOS Control-Click
         self.tree.bind("<Control-Button-1>", self._show_context_menu)
+
+        # Cmd+C / Ctrl+C 複製選取行
+        self.tree.bind("<Command-c>", lambda e: self._copy_selected())
+        self.tree.bind("<Control-c>", lambda e: self._copy_selected())
 
     def _show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
@@ -123,6 +135,33 @@ class TablePanel:
         if tree_idx < len(self._display_indices):
             return self._display_indices[tree_idx]
         return None
+
+    def _copy_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        lines = []
+        lines.append("\t".join(COLS))
+        for item in sel:
+            values = self.tree.item(item, 'values')
+            lines.append("\t".join(str(v) for v in values))
+        text = "\n".join(lines)
+        self.tree.clipboard_clear()
+        self.tree.clipboard_append(text)
+
+    def _copy_column(self, col_name):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        col_idx = COLS.index(col_name)
+        values = []
+        for item in sel:
+            v = self.tree.item(item, 'values')[col_idx]
+            if str(v).strip():
+                values.append(str(v))
+        text = "\n".join(values)
+        self.tree.clipboard_clear()
+        self.tree.clipboard_append(text)
 
     def _delete_selected(self):
         df_idx = self._get_selected_df_index()
@@ -312,6 +351,8 @@ class EditDialog:
 
         self.entries = {}
         self._base_cost = 0
+        self._cost_manual = False
+        self._manual_cost_base = 0
 
         for i, col in enumerate(COLS):
             row_frame = tk.Frame(scroll_frame, bg=COLORS["card"])
@@ -345,7 +386,9 @@ class EditDialog:
                                   highlightthickness=0, bd=1)
                 widget.pack(side="left", fill="x", expand=True, ipady=3)
                 widget.insert(0, str(row_data.get(col, "")))
-                if col in self._calc_fields:
+                if col == "成本(品項+贈品)":
+                    widget.bind("<KeyRelease>", lambda e: self._on_cost_manual_edit())
+                elif col in self._calc_fields:
                     widget.bind("<KeyRelease>", lambda e: self._recalculate())
             self.entries[col] = widget
 
@@ -452,6 +495,23 @@ class EditDialog:
         self._base_cost = float(cost) if cost else 0
         self._recalculate()
 
+    def _on_cost_manual_edit(self):
+        """使用者手動編輯成本欄位時，記錄手動基底並重算"""
+        self._cost_manual = True
+        actual = self._get_num("實拿")
+        shipping_rate, card_rate, invoice_rate = self._rates
+        extra = 0
+        if self.shipping_var.get():
+            extra += round(actual * shipping_rate)
+        if self.card_fee_var.get():
+            extra += round(actual * card_rate)
+        if self.invoice_var.get():
+            extra += round(actual * invoice_rate)
+        self._manual_cost_base = self._get_num("成本(品項+贈品)") - extra
+        cost = self._get_num("成本(品項+贈品)")
+        profit = actual - cost
+        self._set_if_not_focused("利潤", profit)
+
     def _recalculate(self):
         """自動計算 總價、實拿、成本、利潤"""
         price = self._get_num("單價")
@@ -467,23 +527,38 @@ class EditDialog:
         actual = total - special
         self._set_if_not_focused("實拿", actual)
 
-        # 成本 = 基礎成本 + 其他成本 + 附加費用
-        try:
-            other_cost = float(self.other_cost_ent.get() or 0)
-        except (ValueError, TypeError):
-            other_cost = 0
+        if self._cost_manual:
+            # 手動模式：基底 + 附加費用（強制更新，不受 focus 影響）
+            shipping_rate, card_rate, invoice_rate = self._rates
+            extra = 0
+            if self.shipping_var.get():
+                extra += round(actual * shipping_rate)
+            if self.card_fee_var.get():
+                extra += round(actual * card_rate)
+            if self.invoice_var.get():
+                extra += round(actual * invoice_rate)
+            cost = self._manual_cost_base + extra
+            w = self.entries["成本(品項+贈品)"]
+            w.delete(0, tk.END)
+            w.insert(0, str(int(cost) if cost == int(cost) else round(cost, 1)))
+        else:
+            # 自動模式：計算成本
+            try:
+                other_cost = float(self.other_cost_ent.get() or 0)
+            except (ValueError, TypeError):
+                other_cost = 0
 
-        shipping_rate, card_rate, invoice_rate = self._rates
-        extra = 0
-        if self.shipping_var.get():
-            extra += actual * shipping_rate
-        if self.card_fee_var.get():
-            extra += actual * card_rate
-        if self.invoice_var.get():
-            extra += actual * invoice_rate
+            shipping_rate, card_rate, invoice_rate = self._rates
+            extra = 0
+            if self.shipping_var.get():
+                extra += round(actual * shipping_rate)
+            if self.card_fee_var.get():
+                extra += round(actual * card_rate)
+            if self.invoice_var.get():
+                extra += round(actual * invoice_rate)
 
-        cost = (self._base_cost * qty) + other_cost + extra
-        self._set_if_not_focused("成本(品項+贈品)", cost)
+            cost = (self._base_cost * qty) + other_cost + extra
+            self._set_if_not_focused("成本(品項+贈品)", cost)
 
         profit = actual - cost
         self._set_if_not_focused("利潤", profit)
