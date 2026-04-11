@@ -97,18 +97,26 @@ class FormPanel:
         fin_form.pack(fill="x", padx=20, pady=(4, 0))
 
         self._gift_cost = 0
+        self._selected_gifts = []
         self.fin_inputs = {}
 
-        # 贈品 (column 0)
+        # 贈品 (column 0) — 多選 + 搜尋
         gift_cell = tk.Frame(fin_form, bg=COLORS["card"])
         gift_cell.grid(row=0, column=0, padx=6, pady=6, sticky="ew")
-        tk.Label(gift_cell, text="贈品", bg=COLORS["card"], fg=COLORS["text_light"],
+        tk.Label(gift_cell, text="贈品（可多選）", bg=COLORS["card"], fg=COLORS["text_light"],
                  font=("Arial", 10)).pack(anchor="w")
-        gift_values = self.product_db.get_gifts() if self.product_db and hasattr(self.product_db, 'get_gifts') else []
+
+        self._all_gifts = self.product_db.get_gifts() if self.product_db and hasattr(self.product_db, 'get_gifts') else []
         self.gift_cb = ttk.Combobox(gift_cell, width=12, font=("Arial", 11),
-                                     values=gift_values)
+                                     values=self._all_gifts)
         self.gift_cb.pack(fill="x", ipady=4)
-        self.gift_cb.bind("<<ComboboxSelected>>", self._on_gift_selected)
+        self.gift_cb.bind("<<ComboboxSelected>>", self._on_gift_add)
+        self.gift_cb.bind("<KeyRelease>", self._on_gift_key)
+        self.gift_cb.bind("<Return>", self._on_gift_add)
+
+        # 已選贈品標籤區
+        self.gift_tags_frame = tk.Frame(gift_cell, bg=COLORS["card"])
+        self.gift_tags_frame.pack(fill="x", pady=(2, 0))
 
         # 特殊折扣 (column 1)
         fin_col1_cell = tk.Frame(fin_form, bg=COLORS["card"])
@@ -474,14 +482,60 @@ class FormPanel:
             self.invoice_var.set(True)
         self._recalculate()
 
-    # ─── 贈品連動 ───
+    # ─── 贈品連動（多選 + 搜尋）───
 
-    def _on_gift_selected(self, event=None):
-        name = self.gift_cb.get().strip()
-        if name and self.product_db and hasattr(self.product_db, 'get_gift_cost'):
-            self._gift_cost = float(self.product_db.get_gift_cost(name) or 0)
+    def _on_gift_key(self, event):
+        """打字時篩選贈品下拉選單"""
+        if event.keysym in ('Return', 'Up', 'Down'):
+            return
+        typed = self.gift_cb.get().strip().lower()
+        if not typed:
+            self.gift_cb['values'] = self._all_gifts
         else:
-            self._gift_cost = 0
+            filtered = [g for g in self._all_gifts if typed in g.lower()]
+            self.gift_cb['values'] = filtered if filtered else self._all_gifts
+
+    def _on_gift_add(self, event=None):
+        """選擇贈品後加入已選清單"""
+        name = self.gift_cb.get().strip()
+        if not name or name in self._selected_gifts:
+            self.gift_cb.set('')
+            return
+        self._selected_gifts.append(name)
+        self.gift_cb.set('')
+        self.gift_cb['values'] = self._all_gifts
+        self._refresh_gift_tags()
+        self._update_gift_cost()
+
+    def _remove_gift(self, name):
+        """移除已選贈品"""
+        if name in self._selected_gifts:
+            self._selected_gifts.remove(name)
+        self._refresh_gift_tags()
+        self._update_gift_cost()
+
+    def _refresh_gift_tags(self):
+        """重繪已選贈品標籤"""
+        for w in self.gift_tags_frame.winfo_children():
+            w.destroy()
+        for name in self._selected_gifts:
+            tag = tk.Frame(self.gift_tags_frame, bg="#e3f2fd",
+                           highlightbackground=COLORS["primary"], highlightthickness=1)
+            tag.pack(side="left", padx=(0, 4), pady=1)
+            tk.Label(tag, text=name, bg="#e3f2fd", fg=COLORS["primary"],
+                     font=("Arial", 9)).pack(side="left", padx=(4, 0))
+            tk.Button(tag, text="✕", command=lambda n=name: self._remove_gift(n),
+                      bg="#e3f2fd", fg="#c62828", font=("Arial", 8),
+                      relief="flat", cursor="hand2", padx=2, pady=0
+                      ).pack(side="left", padx=(0, 2))
+
+    def _update_gift_cost(self):
+        """計算所有已選贈品的成本總和"""
+        total = 0
+        if self.product_db and hasattr(self.product_db, 'get_gift_cost'):
+            for name in self._selected_gifts:
+                total += float(self.product_db.get_gift_cost(name) or 0)
+        self._gift_cost = total
         self._recalculate()
 
     # ─── 自動計算 ───
@@ -545,7 +599,7 @@ class FormPanel:
             "訂購人": customer,
             "電話": phone,
             "地址": self.shared_inputs["地址"].get().strip(),
-            "贈品": self.gift_cb.get().strip(),
+            "贈品": "、".join(self._selected_gifts),
             "備註": self.remark_ent.get().strip(),
             "特殊折扣": self.fin_inputs["特殊折扣"].get().strip(),
             "付款方式": self.payment_cb.get().strip(),
@@ -646,7 +700,9 @@ class FormPanel:
             e.delete(0, tk.END)
 
         self.gift_cb.set('')
+        self._selected_gifts = []
         self._gift_cost = 0
+        self._refresh_gift_tags()
         self.payment_cb.set('')
         self.paid_cb.set('')
         self.remark_ent.delete(0, tk.END)
@@ -665,7 +721,8 @@ class FormPanel:
                 rd["品項"]['values'] = products
                 rd["_all_products"] = products
             if hasattr(self.product_db, 'get_gifts'):
-                self.gift_cb['values'] = self.product_db.get_gifts()
+                self._all_gifts = self.product_db.get_gifts()
+                self.gift_cb['values'] = self._all_gifts
 
     # ─── 輔助 ───
 

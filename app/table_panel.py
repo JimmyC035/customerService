@@ -45,7 +45,7 @@ class TablePanel:
                                    font=("Arial", 12), relief="flat",
                                    highlightthickness=0)
         self.search_ent.pack(side="left", padx=8, pady=6, fill="x", expand=True)
-        self.search_ent.insert(0, "搜尋姓名、電話或地址...")
+        self.search_ent.insert(0, "搜尋姓名、電話、地址或品項...")
         self.search_ent.config(fg=COLORS["text_light"])
         self.search_ent.bind("<FocusIn>", self._search_focus_in)
         self.search_ent.bind("<FocusOut>", self._search_focus_out)
@@ -246,14 +246,15 @@ class TablePanel:
     def search(self):
         df = self.get_df()
         q = self.search_ent.get().strip()
-        if not q or q == "搜尋姓名、電話或地址...":
+        if not q or q == "搜尋姓名、電話、地址或品項...":
             self.display(df)
             return
 
         q = q.lower()
         mask = (df["訂購人"].astype(str).str.contains(q, case=False) |
                 df["電話"].astype(str).str.contains(q, case=False) |
-                df["地址"].astype(str).str.contains(q, case=False))
+                df["地址"].astype(str).str.contains(q, case=False) |
+                df["品項"].astype(str).str.contains(q, case=False))
         self.display(df[mask])
 
     # ─── 輔助 ───
@@ -265,13 +266,13 @@ class TablePanel:
                          padx=14, pady=6, cursor="hand2")
 
     def _search_focus_in(self, event):
-        if self.search_ent.get() == "搜尋姓名、電話或地址...":
+        if self.search_ent.get() == "搜尋姓名、電話、地址或品項...":
             self.search_ent.delete(0, tk.END)
             self.search_ent.config(fg=COLORS["text"])
 
     def _search_focus_out(self, event):
         if not self.search_ent.get():
-            self.search_ent.insert(0, "搜尋姓名、電話或地址...")
+            self.search_ent.insert(0, "搜尋姓名、電話、地址或品項...")
             self.search_ent.config(fg=COLORS["text_light"])
 
 
