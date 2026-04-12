@@ -498,7 +498,7 @@ class FormPanel:
     def _on_gift_add(self, event=None):
         """選擇贈品後加入已選清單"""
         name = self.gift_cb.get().strip()
-        if not name or name in self._selected_gifts:
+        if not name:
             self.gift_cb.set('')
             return
         self._selected_gifts.append(name)
@@ -507,10 +507,10 @@ class FormPanel:
         self._refresh_gift_tags()
         self._update_gift_cost()
 
-    def _remove_gift(self, name):
-        """移除已選贈品"""
-        if name in self._selected_gifts:
-            self._selected_gifts.remove(name)
+    def _remove_gift(self, idx):
+        """移除已選贈品（依索引）"""
+        if 0 <= idx < len(self._selected_gifts):
+            self._selected_gifts.pop(idx)
         self._refresh_gift_tags()
         self._update_gift_cost()
 
@@ -518,13 +518,13 @@ class FormPanel:
         """重繪已選贈品標籤"""
         for w in self.gift_tags_frame.winfo_children():
             w.destroy()
-        for name in self._selected_gifts:
+        for i, name in enumerate(self._selected_gifts):
             tag = tk.Frame(self.gift_tags_frame, bg="#e3f2fd",
                            highlightbackground=COLORS["primary"], highlightthickness=1)
             tag.pack(side="left", padx=(0, 4), pady=1)
             tk.Label(tag, text=name, bg="#e3f2fd", fg=COLORS["primary"],
                      font=("Arial", 9)).pack(side="left", padx=(4, 0))
-            tk.Button(tag, text="✕", command=lambda n=name: self._remove_gift(n),
+            tk.Button(tag, text="✕", command=lambda idx=i: self._remove_gift(idx),
                       bg="#e3f2fd", fg="#c62828", font=("Arial", 8),
                       relief="flat", cursor="hand2", padx=2, pady=0
                       ).pack(side="left", padx=(0, 2))
